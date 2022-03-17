@@ -22,11 +22,14 @@ class Env(tk.Tk):
         self.counter = 0
         self.rewards = []
         self.goal = []
-        self.cs_location = self.random_location()
+        self.car_location = self.canvas.coords(self.car)
+        self.cs_location = [4, 4]
         self.user_location = self.random_location()
+        self.user_dest_location = self.random_location()
         #TODO set rewards
         self.set_reward(self.cs_location, 0)
         self.set_reward(self.user_location, 1)
+        self.set_reward(self.user_dest_location, 10)
 
     def _build_canvas(self):
         canvas = tk.Canvas(self, bg='white',
@@ -44,14 +47,18 @@ class Env(tk.Tk):
         self.goal = []
         x, y = UNIT/2, UNIT/2
 
-        canvas.pack()
-
         self.car = canvas.create_image(x, y, image=self.shapes[0])
+
+        self.taken_locations = [[x,y]]
+
+        canvas.pack()
 
         return canvas
 
     def random_location(self):
-        location = [np.random.randint(HEIGHT-1), np.random.randint(WIDTH-1)]
+        location = [np.random.randint(WIDTH-1), np.random.randint(HEIGHT-1)]
+        while [(UNIT * x) + UNIT / 2 for x in location] in self.taken_locations:
+            location = [np.random.randint(WIDTH-1), np.random.randint(HEIGHT-1)]
         return location
 
     def load_images(self):
@@ -60,12 +67,15 @@ class Env(tk.Tk):
         station_image = Image.open("./img/green-energy.png").convert('RGBA').resize((img_unit, img_unit))
         # User image taken from https://uxwing.com/person-profile-image-icon/
         user_image = Image.open("./img/person.png").convert('RGBA').resize((img_unit, img_unit))
+        # Dest image taken from https://uxwing.com/area-icon/
+        user_dest_image = Image.open("./img/area.png").convert('RGBA').resize((img_unit,img_unit))
         car = PhotoImage(car_image)
         station = PhotoImage(station_image)
         user = PhotoImage(user_image)
+        dest = PhotoImage(user_dest_image)
         #TODO add image for destination
 
-        return car, station, user
+        return car, station, user, dest
 
     #TODO
     def reset_rewards(self):
@@ -82,14 +92,23 @@ class Env(tk.Tk):
             temp['figure'] = self.canvas.create_image((UNIT * x) + UNIT / 2,
                                                        (UNIT * y) + UNIT / 2,
                                                        image=self.shapes[1])
+            self.taken_locations.append([(UNIT * x) + UNIT / 2,(UNIT * y) + UNIT / 2])
 
         elif reward == 1:
             temp['reward'] = reward
             temp['figure'] = self.canvas.create_image((UNIT * x) + UNIT / 2,
                                                       (UNIT * y) + UNIT / 2,
                                                       image=self.shapes[2])
+            self.taken_locations.append([(UNIT * x) + UNIT / 2,(UNIT * y) + UNIT / 2])
 
             self.goal.append(temp['figure'])
+
+        elif reward == 10:
+            temp['reward'] = reward
+            temp['figure'] = self.canvas.create_image((UNIT * x) + UNIT / 2,
+                                                      (UNIT * y) + UNIT / 2,
+                                                      image=self.shapes[3])
+            self.taken_locations.append([(UNIT * x) + UNIT / 2,(UNIT * y) + UNIT / 2])
 
         temp['coords'] = self.canvas.coords(temp['figure'])
         temp['state'] = state
