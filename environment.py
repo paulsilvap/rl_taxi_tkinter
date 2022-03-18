@@ -9,14 +9,14 @@ UNIT = 100
 HEIGHT = 5
 WIDTH = 5
 NUM_NODES = HEIGHT * WIDTH - 1
-MAX_SOC = 24.0
+MAX_SOC = 24
 
 # np.random.seed(1)
 
 class Env(tk.Tk):
     def __init__(self):
         super(Env, self).__init__()
-        self.action_space = ['u','d','l','r']
+        self.action_space = ['u','d','l','r','c']
         self.action_size = len(self.action_space) + 1
         self.observation_space = spaces.Box(
             low= np.array([0.]* (NUM_NODES+1 + 1 + 4)), 
@@ -34,14 +34,14 @@ class Env(tk.Tk):
         self.rewards = []
         self.goal = []
 
+        self.ev_soc = MAX_SOC
+
         self.car_location = self.canvas.coords(self.car)
         self.cs_location = [4, 4]
-        self.user_location = self.random_location()
-        self.user_dest_location = self.random_location()
-        
-        #TODO set rewards
         self.set_reward(self.cs_location, 0)
+        self.user_location = self.random_location()
         self.set_reward(self.user_location, 1)
+        self.user_dest_location = self.random_location()
         self.set_reward(self.user_dest_location, 10)
 
     def _build_canvas(self):
@@ -92,7 +92,21 @@ class Env(tk.Tk):
 
     #TODO
     def reset_rewards(self):
-        pass
+
+        for reward in self.rewards:
+            self.canvas.delete(reward['figure'])
+
+        self.rewards.clear()
+        self.goal.clear()
+
+        self.taken_locations = [self.taken_locations[0]]
+
+        self.set_reward(self.cs_location, 0)
+        self.user_location = self.random_location()
+        self.set_reward(self.user_location, 1)
+        self.user_dest_location = self.random_location()
+        self.set_reward(self.user_dest_location, 10)
+
 
     #TODO complete rewards
     def set_reward(self, state, reward):
@@ -133,6 +147,12 @@ class Env(tk.Tk):
         check_list['if_goal'] = False
         rewards = 0
 
+        for reward in self.rewards:
+            if reward['state'] == state:
+                rewards += reward['reward']
+                if reward['reward'] > 0:
+                    check_list['if_goal'] = True
+
         check_list['rewards'] = rewards
 
         return check_list
@@ -140,27 +160,22 @@ class Env(tk.Tk):
     def coords_to_state(self, coords):
         x = int((coords[0] - UNIT / 2) / UNIT)
         y = int((coords[1] - UNIT / 2) / UNIT)
+        # print(x,y)
         return [x,y]
 
+    def state_to_node(self, coords):
+        x, y = coords
+        return int((x * WIDTH) + y)
+    
     #TODO
     def get_state(self):
-        location = self.coords_to_state(self.canvas.coords(self.car))
-        agent_x = location[0]
-        agent_y = location[1]
-
-        states = list()
-
-        for reward in self.rewards:
-            reward_location = reward['state']
-            states.append(reward_location[0] - agent_x)
-            states.append(reward_location[1] - agent_y)
-            if reward['reward'] < 0:
-                states.append(-1)
-                states.append(reward['direction'])
-            else:
-                states.append(1)
-
-        return np.array(np.zeros(30, dtype=np.float32))
+        states = np.array(np.zeros(30, dtype=np.float32))
+        states[0] = self.ev_soc
+        states[1] = self.state_to_node(self.coords_to_state(self.canvas.coords(self.car)))
+        states[2] = self.state_to_node(self.user_location)
+        states[3] = self.state_to_node(self.user_dest_location)
+        states[4] = self.state_to_node(self.cs_location)
+        return states
 
     def reset(self):
         self.update()
@@ -181,6 +196,11 @@ class Env(tk.Tk):
         next_coords = self.move(self.car, action)
         check = self.check_if_reward(self.coords_to_state(next_coords))
         done = check['if_goal']
+
+        if self.ev_soc <= 0:
+            done = True
+            self.ev_soc = MAX_SOC
+        
         reward = check['rewards']
 
         self.canvas.tag_raise(self.car)
@@ -224,6 +244,8 @@ class Env(tk.Tk):
         elif action == 3:  # left
             if s[0] > UNIT:
                 base_action[0] -= UNIT
+
+        self.ev_soc -= 0.4
 
         self.canvas.move(target, base_action[0], base_action[1])
 
