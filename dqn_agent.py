@@ -3,6 +3,7 @@ import numpy as np
 from environment import Env
 import torch
 from torch import nn
+import torch.nn.functional as F
 import torch.optim as optim
 
 EPISODES = 1000
@@ -86,7 +87,7 @@ class DQNAgent():
 
     def choose_action(self, obs):
         if np.random.random() > self.epsilon:
-            state = torch.tensor([obs], dtype=torch.float32).to(self.Q_eval.device)
+            state = torch.tensor(np.array([obs]), dtype=torch.float32).to(self.Q_eval.device)
             actions = self.Q_eval.forward(state)
             action = torch.argmax(actions).item()
         else:
@@ -100,11 +101,11 @@ class DQNAgent():
     def sample_memory(self):
         state, action, reward, state_, done = self.memory.sample_buffer(self.batch_size)
 
-        states = torch.tensor(state).to(self.q_eval.device)
-        rewards = torch.tensor(reward).to(self.q_eval.device)
-        dones = torch.tensor(done).to(self.q_eval.device)
-        actions = torch.tensor(action).to(self.q_eval.device)
-        states_ = torch.tensor(state_).to(self.q_eval.device)
+        states = torch.tensor(state).to(self.Q_eval.device)
+        rewards = torch.tensor(reward).to(self.Q_eval.device)
+        dones = torch.tensor(done).to(self.Q_eval.device)
+        actions = torch.tensor(action).to(self.Q_eval.device)
+        states_ = torch.tensor(state_).to(self.Q_eval.device)
 
         return states, actions, rewards, states_, dones
 
@@ -126,7 +127,7 @@ class DQNAgent():
         states, actions, rewards, states_, dones = self.sample_memory()
         indices = np.arange(self.batch_size)
 
-        q_eval = self.Q_eval.forward(states)[indices, actions]
+        q_eval = self.Q_eval.forward(states)[indices, actions.type(torch.long)]
         q_target = self.Q_target.forward(states_).max(dim=1)[0]
 
         q_target[dones] = 0.0
@@ -141,7 +142,7 @@ class DQNAgent():
 
 if __name__ == "__main__":
     env = Env()
-    agent = DQNAgent(0.99, 1.0, STATE_SIZE, 4, 32)
+    agent = DQNAgent(0.99, 1.0, env.observation_space.shape[0], env.action_size, 32)
 
     best_score = -np.inf
 
@@ -162,6 +163,9 @@ if __name__ == "__main__":
             # next_state = np.reshape(state, [1, STATE_SIZE])
             
             score += reward
+
+            agent.store_transition(state, action, reward, next_state, done)
+            agent.train()
 
             state = next_state
 

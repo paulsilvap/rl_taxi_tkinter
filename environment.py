@@ -2,11 +2,14 @@ import time
 import numpy as np
 import tkinter as tk
 from PIL import ImageTk, Image
+from gym import spaces
 
 PhotoImage = ImageTk.PhotoImage
 UNIT = 100
 HEIGHT = 5
 WIDTH = 5
+NUM_NODES = HEIGHT * WIDTH - 1
+MAX_SOC = 24.0
 
 # np.random.seed(1)
 
@@ -14,18 +17,28 @@ class Env(tk.Tk):
     def __init__(self):
         super(Env, self).__init__()
         self.action_space = ['u','d','l','r']
-        self.action_size = len(self.action_space)
+        self.action_size = len(self.action_space) + 1
+        self.observation_space = spaces.Box(
+            low= np.array([0.]* (NUM_NODES+1 + 1 + 4)), 
+            high = np.concatenate(
+                (np.concatenate((np.array([np.float32(MAX_SOC)]), np.array([np.float32(NUM_NODES)]*4))), 
+                np.array([np.float32(5)]*(NUM_NODES+1)))), 
+            dtype= np.float32)
+
         self.title('Taxi')
         self.geometry('{0}x{1}'.format(HEIGHT * UNIT, WIDTH * UNIT))
         self.shapes = self.load_images()
         self.canvas = self._build_canvas()
+        
         self.counter = 0
         self.rewards = []
         self.goal = []
+
         self.car_location = self.canvas.coords(self.car)
         self.cs_location = [4, 4]
         self.user_location = self.random_location()
         self.user_dest_location = self.random_location()
+        
         #TODO set rewards
         self.set_reward(self.cs_location, 0)
         self.set_reward(self.user_location, 1)
@@ -137,7 +150,17 @@ class Env(tk.Tk):
 
         states = list()
 
-        return states
+        for reward in self.rewards:
+            reward_location = reward['state']
+            states.append(reward_location[0] - agent_x)
+            states.append(reward_location[1] - agent_y)
+            if reward['reward'] < 0:
+                states.append(-1)
+                states.append(reward['direction'])
+            else:
+                states.append(1)
+
+        return np.array(np.zeros(30, dtype=np.float32))
 
     def reset(self):
         self.update()
@@ -169,6 +192,13 @@ class Env(tk.Tk):
     #TODO
     def move_rewards(self):
         new_rewards = []
+        for temp in self.rewards:
+            if temp['reward'] > 0:
+                new_rewards.append(temp)
+                continue
+            temp['coords'] = self.move_const(temp)
+            temp['state'] = self.coords_to_state(temp['coords'])
+            new_rewards.append(temp)
         return new_rewards
 
     #TODO
