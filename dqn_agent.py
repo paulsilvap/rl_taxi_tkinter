@@ -7,7 +7,6 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 EPISODES = 1000
-STATE_SIZE = 20 #TODO define actual state size
 
 class ReplayBuffer():
     def __init__(self, mem_size, in_features):
@@ -142,7 +141,7 @@ class DQNAgent():
 
 if __name__ == "__main__":
     env = Env()
-    agent = DQNAgent(0.99, 1.0, env.observation_space.shape[0], env.action_size, 32)
+    agent = DQNAgent(0.99, 1.0, env.observation_space.shape[0], env.action_size, 32, eps_dec=5e-5)
 
     best_score = -np.inf
 

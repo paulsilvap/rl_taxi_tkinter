@@ -3,6 +3,7 @@ import numpy as np
 import tkinter as tk
 from PIL import ImageTk, Image
 from gym import spaces
+import pdb
 
 PhotoImage = ImageTk.PhotoImage
 UNIT = 100
@@ -35,6 +36,7 @@ class Env(tk.Tk):
         self.goal = []
 
         self.ev_soc = MAX_SOC
+        self.passenger = False
 
         self.car_location = self.canvas.coords(self.car)
         self.cs_location = [4, 4]
@@ -107,6 +109,7 @@ class Env(tk.Tk):
         self.user_dest_location = self.random_location()
         self.set_reward(self.user_dest_location, 10)
 
+        self.passenger = False
 
     #TODO complete rewards
     def set_reward(self, state, reward):
@@ -128,14 +131,14 @@ class Env(tk.Tk):
                                                       image=self.shapes[2])
             self.taken_locations.append([(UNIT * x) + UNIT / 2,(UNIT * y) + UNIT / 2])
 
-            self.goal.append(temp['figure'])
-
         elif reward == 10:
             temp['reward'] = reward
             temp['figure'] = self.canvas.create_image((UNIT * x) + UNIT / 2,
                                                       (UNIT * y) + UNIT / 2,
                                                       image=self.shapes[3])
             self.taken_locations.append([(UNIT * x) + UNIT / 2,(UNIT * y) + UNIT / 2])
+
+            self.goal.append(temp['figure'])
 
         temp['coords'] = self.canvas.coords(temp['figure'])
         temp['state'] = state
@@ -144,14 +147,28 @@ class Env(tk.Tk):
     #TODO
     def check_if_reward(self, state):
         check_list = dict()
+        check_list['if_done'] = False
         check_list['if_goal'] = False
         rewards = 0
 
+        # pdb.set_trace()
+
         for reward in self.rewards:
             if reward['state'] == state:
-                rewards += reward['reward']
-                if reward['reward'] > 0:
+                if reward['reward'] == 1 and not self.passenger:
+                    rewards += reward['reward']
+                    self.passenger = True
+                if reward['reward'] == 10 and self.passenger:
+                    rewards += reward['reward']
                     check_list['if_goal'] = True
+                    self.passenger = False
+
+        if self.ev_soc <= 0:
+            check_list['if_done'] = True
+            rewards += -20
+
+        if self.counter == 239:
+            check_list['if_done'] = True
 
         check_list['rewards'] = rewards
 
@@ -165,7 +182,8 @@ class Env(tk.Tk):
 
     def state_to_node(self, coords):
         x, y = coords
-        return int((x * WIDTH) + y)
+        node = int((y * WIDTH) + x)
+        return node
     
     #TODO
     def get_state(self):
@@ -183,6 +201,7 @@ class Env(tk.Tk):
         x, y = self.canvas.coords(self.car)
         self.canvas.move(self.car, UNIT / 2 - x, UNIT / 2 - y)
         self.reset_rewards()
+        self.ev_soc = MAX_SOC
         return self.get_state()
 
     #TODO
@@ -190,42 +209,20 @@ class Env(tk.Tk):
         self.counter += 1
         self.render()
 
-        if self.counter % 2 == 1:
-            self.rewards = self.move_rewards()
-
         next_coords = self.move(self.car, action)
         check = self.check_if_reward(self.coords_to_state(next_coords))
-        done = check['if_goal']
-
-        if self.ev_soc <= 0:
-            done = True
-            self.ev_soc = MAX_SOC
+        done = check['if_done']
         
         reward = check['rewards']
+
+        if check['if_goal']:
+            self.reset_rewards()
 
         self.canvas.tag_raise(self.car)
 
         s_ = self.get_state()
 
         return s_, reward, done
-
-    #TODO
-    def move_rewards(self):
-        new_rewards = []
-        for temp in self.rewards:
-            if temp['reward'] > 0:
-                new_rewards.append(temp)
-                continue
-            temp['coords'] = self.move_const(temp)
-            temp['state'] = self.coords_to_state(temp['coords'])
-            new_rewards.append(temp)
-        return new_rewards
-
-    #TODO
-    def move_const(self, target):
-        s_ = self.canvas.coords(target['figure'])
-
-        return s_
 
     def move(self, target, action):
         s = self.canvas.coords(target)
