@@ -44,9 +44,9 @@ class DQN(nn.Module):
         super().__init__()
 
         self.net = nn.Sequential(
-            nn.Linear(in_features, 64),
+            nn.Linear(in_features, 128),
             nn.Tanh(),
-            nn.Linear(64, n_actions))
+            nn.Linear(128, n_actions))
 
         self.loss = nn.MSELoss()
         self.optimizer = optim.RMSprop(self.parameters(), lr=lr)

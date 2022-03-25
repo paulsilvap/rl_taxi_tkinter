@@ -10,7 +10,7 @@ UNIT = 100
 HEIGHT = 5
 WIDTH = 5
 NUM_NODES = HEIGHT * WIDTH - 1
-MAX_SOC = 24
+MAX_SOC = 48
 
 # np.random.seed(1)
 
@@ -18,12 +18,16 @@ class Env(tk.Tk):
     def __init__(self):
         super(Env, self).__init__()
         self.action_space = ['u','d','l','r','c']
-        self.action_size = len(self.action_space) + 1
+        self.action_size = len(self.action_space) - 1
         self.observation_space = spaces.Box(
-            low= np.array([0.]* (NUM_NODES+1 + 1 + 4)), 
+            # low= np.array([0.]* (NUM_NODES+1 + 1 + 4)), 
+            # high = np.concatenate(
+            #     (np.concatenate((np.array([np.float32(MAX_SOC)]), np.array([np.float32(NUM_NODES)]*4))), 
+            #     np.array([np.float32(5)]*(NUM_NODES+1)))), 
+            low= np.array([0.]* (1 + 1 + 4)), 
             high = np.concatenate(
                 (np.concatenate((np.array([np.float32(MAX_SOC)]), np.array([np.float32(NUM_NODES)]*4))), 
-                np.array([np.float32(5)]*(NUM_NODES+1)))), 
+                np.array([np.float32(3)]*(1)))), 
             dtype= np.float32)
 
         self.title('Taxi')
@@ -158,14 +162,17 @@ class Env(tk.Tk):
                 if reward['reward'] == 1 and not self.passenger:
                     rewards += reward['reward']
                     self.passenger = True
-                if reward['reward'] == 10 and self.passenger:
+                    self.canvas.itemconfigure(reward['figure'], state='hidden')
+                elif reward['reward'] == 10 and self.passenger:
                     rewards += reward['reward']
                     check_list['if_goal'] = True
                     self.passenger = False
+                elif reward['reward'] == 0 and not self.passenger:
+                    self.ev_soc += 2.0
 
         if self.ev_soc <= 0:
             check_list['if_done'] = True
-            rewards += -20
+            rewards -= 50
 
         if self.counter == 239:
             check_list['if_done'] = True
@@ -187,9 +194,11 @@ class Env(tk.Tk):
     
     #TODO
     def get_state(self):
-        states = np.array(np.zeros(30, dtype=np.float32))
+        states = np.array(np.zeros(self.observation_space.shape[0], dtype=np.float32))
         states[0] = self.ev_soc
         states[1] = self.state_to_node(self.coords_to_state(self.canvas.coords(self.car)))
+        if self.passenger:
+            self.user_location = self.coords_to_state(self.canvas.coords(self.car))
         states[2] = self.state_to_node(self.user_location)
         states[3] = self.state_to_node(self.user_dest_location)
         states[4] = self.state_to_node(self.cs_location)
