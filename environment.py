@@ -163,11 +163,11 @@ class Env(tk.Tk):
                     rewards += reward['reward']
                     self.passenger = True
                     self.canvas.itemconfigure(reward['figure'], state='hidden')
-                elif reward['reward'] == 10 and self.passenger:
+                if reward['reward'] == 10 and self.passenger:
                     rewards += reward['reward']
                     check_list['if_goal'] = True
                     self.passenger = False
-                elif reward['reward'] == 0 and not self.passenger:
+                if reward['reward'] == 0 and not self.passenger:
                     self.ev_soc += 2.0
 
         if self.ev_soc <= 0:
