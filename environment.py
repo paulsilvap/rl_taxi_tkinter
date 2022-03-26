@@ -10,15 +10,22 @@ UNIT = 100
 HEIGHT = 5
 WIDTH = 5
 NUM_NODES = HEIGHT * WIDTH - 1
-MAX_SOC = 48
+MAX_SOC = 24
+CHARGING_REWARD = 0
+PICKUP_REWARD = 1
+DROP_REWARD = 5
+NOBATTERY_PENALTY = 50
+CHARGING_RATE = 2.0
+DISCHARGE_RATE = 0.4
+MAX_STEPS = 240
 
 # np.random.seed(1)
 
 class Env(tk.Tk):
     def __init__(self):
         super(Env, self).__init__()
-        self.action_space = ['u','d','l','r','c']
-        self.action_size = len(self.action_space) - 1
+        self.action_space = ['u','d','l','r']
+        self.action_size = len(self.action_space)
         self.observation_space = spaces.Box(
             # low= np.array([0.]* (NUM_NODES+1 + 1 + 4)), 
             # high = np.concatenate(
@@ -44,11 +51,11 @@ class Env(tk.Tk):
 
         self.car_location = self.canvas.coords(self.car)
         self.cs_location = [4, 4]
-        self.set_reward(self.cs_location, 0)
+        self.set_reward(self.cs_location, CHARGING_REWARD)
         self.user_location = self.random_location()
-        self.set_reward(self.user_location, 1)
+        self.set_reward(self.user_location, PICKUP_REWARD)
         self.user_dest_location = self.random_location()
-        self.set_reward(self.user_dest_location, 10)
+        self.set_reward(self.user_dest_location, DROP_REWARD)
 
     def _build_canvas(self):
         canvas = tk.Canvas(self, bg='white',
@@ -107,11 +114,11 @@ class Env(tk.Tk):
 
         self.taken_locations = [self.taken_locations[0]]
 
-        self.set_reward(self.cs_location, 0)
+        self.set_reward(self.cs_location, CHARGING_REWARD)
         self.user_location = self.random_location()
-        self.set_reward(self.user_location, 1)
+        self.set_reward(self.user_location, PICKUP_REWARD)
         self.user_dest_location = self.random_location()
-        self.set_reward(self.user_dest_location, 10)
+        self.set_reward(self.user_dest_location, DROP_REWARD)
 
         self.passenger = False
 
@@ -121,21 +128,21 @@ class Env(tk.Tk):
         x = int(state[0])
         y = int(state[1])
         temp = {}
-        if reward == 0:
+        if reward == CHARGING_REWARD:
             temp['reward'] = reward
             temp['figure'] = self.canvas.create_image((UNIT * x) + UNIT / 2,
                                                        (UNIT * y) + UNIT / 2,
                                                        image=self.shapes[1])
             self.taken_locations.append([(UNIT * x) + UNIT / 2,(UNIT * y) + UNIT / 2])
 
-        elif reward == 1:
+        elif reward == PICKUP_REWARD:
             temp['reward'] = reward
             temp['figure'] = self.canvas.create_image((UNIT * x) + UNIT / 2,
                                                       (UNIT * y) + UNIT / 2,
                                                       image=self.shapes[2])
             self.taken_locations.append([(UNIT * x) + UNIT / 2,(UNIT * y) + UNIT / 2])
 
-        elif reward == 10:
+        elif reward == DROP_REWARD:
             temp['reward'] = reward
             temp['figure'] = self.canvas.create_image((UNIT * x) + UNIT / 2,
                                                       (UNIT * y) + UNIT / 2,
@@ -159,22 +166,22 @@ class Env(tk.Tk):
 
         for reward in self.rewards:
             if reward['state'] == state:
-                if reward['reward'] == 1 and not self.passenger:
+                if reward['reward'] == PICKUP_REWARD and not self.passenger:
                     rewards += reward['reward']
                     self.passenger = True
                     self.canvas.itemconfigure(reward['figure'], state='hidden')
-                if reward['reward'] == 10 and self.passenger:
+                if reward['reward'] == DROP_REWARD and self.passenger:
                     rewards += reward['reward']
                     check_list['if_goal'] = True
                     self.passenger = False
-                if reward['reward'] == 0 and not self.passenger:
-                    self.ev_soc += 2.0
+                if reward['reward'] == CHARGING_REWARD and not self.passenger:
+                    self.ev_soc += CHARGING_RATE
 
         if self.ev_soc <= 0:
             check_list['if_done'] = True
-            rewards -= 50
+            rewards -= NOBATTERY_PENALTY
 
-        if self.counter == 239:
+        if self.counter == MAX_STEPS:
             check_list['if_done'] = True
 
         check_list['rewards'] = rewards
@@ -211,6 +218,7 @@ class Env(tk.Tk):
         self.canvas.move(self.car, UNIT / 2 - x, UNIT / 2 - y)
         self.reset_rewards()
         self.ev_soc = MAX_SOC
+        self.counter = 0
         return self.get_state()
 
     #TODO
@@ -251,7 +259,7 @@ class Env(tk.Tk):
             if s[0] > UNIT:
                 base_action[0] -= UNIT
 
-        self.ev_soc -= 0.4
+        self.ev_soc -= DISCHARGE_RATE
 
         self.canvas.move(target, base_action[0], base_action[1])
 
