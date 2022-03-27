@@ -11,7 +11,7 @@ LR = 1e-3
 
 if __name__ == "__main__":
     env = Env()
-    agent = DQNAgent(GAMMA, EPSILON, env.observation_space.shape[0], env.action_size, BATCH, eps_dec={EPS_DEC}, 
+    agent = DQNAgent(GAMMA, EPSILON, env.observation_space.shape[0], env.action_size, BATCH, eps_dec=EPS_DEC, 
         name = f'lr_{LR}_batch_{BATCH}_dec_{EPS_DEC}_{EPISODES}_gamma_{GAMMA}', lr=LR)
 
     best_avg_score = best_score = -np.inf
