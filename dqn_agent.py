@@ -1,12 +1,9 @@
-import re
 import numpy as np
-from environment import Env
 import torch
 from torch import nn
 import torch.nn.functional as F
 import torch.optim as optim
-
-EPISODES = 1000
+import os
 
 class ReplayBuffer():
     def __init__(self, mem_size, in_features):
@@ -40,13 +37,15 @@ class ReplayBuffer():
         return states, actions, rewards, states_, terminal
 
 class DQN(nn.Module):
-    def __init__(self, in_features, n_actions, lr = 0.001):
+    def __init__(self, in_features, n_actions, name, chkpt_dir, lr = 0.001):
         super().__init__()
+        self.checkpoint_dir = chkpt_dir
+        self.checkpoint_file = os.path.join(self.checkpoint_dir, f'{name}.pt')
 
         self.net = nn.Sequential(
-            nn.Linear(in_features, 128),
+            nn.Linear(in_features, 64),
             nn.Tanh(),
-            nn.Linear(128, n_actions))
+            nn.Linear(64, n_actions))
 
         self.loss = nn.MSELoss()
         self.optimizer = optim.RMSprop(self.parameters(), lr=lr)
@@ -57,10 +56,16 @@ class DQN(nn.Module):
     def forward(self, x):
         return self.net(x)
 
+    def save_checkpoint(self):
+        torch.save(self.state_dict(), self.checkpoint_file)
+
+    def load_checkpoint(self):
+        self.load_state_dict(torch.load(self.checkpoint_file))
+        self.eval()
+
 class DQNAgent():
     def __init__(self, gamma, epsilon, in_features, n_actions, batch_size, lr = 0.001, 
-            max_mem_size=100000, eps_end=0.01, eps_dec=5e-4, update_tn = 1000):
-        self.load_model = False
+            max_mem_size=100000, eps_end=0.01, eps_dec=5e-4, update_tn = 1000, chkpt_dir='chkpt/dqn', name = 'model'):
         self.action_space = [i for i in range(n_actions)]
         self.state_size = in_features
         # Hyperparameters
@@ -76,13 +81,9 @@ class DQNAgent():
 
         self.memory = ReplayBuffer(max_mem_size, in_features)
 
-        self.Q_eval = DQN(in_features, n_actions)
+        self.Q_eval = DQN(in_features, n_actions, 'q_eval' + '_' + name, chkpt_dir)
 
-        self.Q_target = DQN(in_features, n_actions)
-
-        if self.load_model:
-            self.epsilon = 0.05
-            self.model.load_weights('./save_model/dqn_trained.h5')
+        self.Q_target = DQN(in_features, n_actions, 'q_target' '_' + name, chkpt_dir)
 
     def choose_action(self, obs):
         if np.random.random() > self.epsilon:
@@ -115,6 +116,14 @@ class DQNAgent():
     def decrement_epsilon(self):
         self.epsilon = self.epsilon - self.epsilon_decay if self.epsilon > self.epsilon_min else self.epsilon_min
 
+    def save_models(self):
+        self.Q_eval.save_checkpoint()
+        self.Q_target.save_checkpoint()
+
+    def load_models(self):
+        self.Q_eval.load_checkpoint()
+        self.Q_target.load_checkpoint()
+
     def train(self):
         if self.memory.mem_counter < self.batch_size:
             return
@@ -138,48 +147,3 @@ class DQNAgent():
         self.ls_counter += 1
 
         self.decrement_epsilon()
-
-if __name__ == "__main__":
-    env = Env()
-    agent = DQNAgent(0.99, 1.0, env.observation_space.shape[0], env.action_size, 32, eps_dec=5e-5)
-
-    best_score = -np.inf
-
-    global_step = 0
-    scores, eps_history, step = [], [], []
-
-    for e in range(EPISODES):
-        done = False
-        score = 0
-        state = env.reset()
-        # state = np.reshape(state, [1, STATE_SIZE])
-
-        while not done:
-            global_step += 1
-
-            action = agent.choose_action(state)
-            next_state, reward, done = env.step(action)
-            # next_state = np.reshape(state, [1, STATE_SIZE])
-            
-            score += reward
-
-            agent.store_transition(state, action, reward, next_state, done)
-            agent.train()
-
-            state = next_state
-
-        scores.append(score)
-        step.append(global_step)
-
-        avg_score = np.mean(scores[-100:])
-
-        print('episode: ', e,'score: ', score,
-             ' average score %.1f' % avg_score, 'best score %.2f' % best_score,
-            'epsilon %.2f' % agent.epsilon, 'steps', global_step)
-
-        if avg_score > best_score:
-            best_score = avg_score
-
-        eps_history.append(agent.epsilon)
-
-
