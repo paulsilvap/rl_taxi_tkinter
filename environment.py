@@ -11,43 +11,43 @@ HEIGHT = 5
 WIDTH = 5
 NUM_NODES = HEIGHT * WIDTH - 1
 MAX_SOC = 24
+MAX_STEPS = 240
 CHARGING_REWARD = 0
 PICKUP_REWARD = 1
-DROP_REWARD = 5
-NOBATTERY_PENALTY = 50
+DROP_REWARD = 25
+DISCHARGE_RATE = 0.2
+NOBATTERY_PENALTY = MAX_STEPS - (MAX_SOC / DISCHARGE_RATE)
 CHARGING_RATE = 2.0
-DISCHARGE_RATE = 0.4
-MAX_STEPS = 240
 
 # np.random.seed(1)
 
 class Env(tk.Tk):
-    def __init__(self):
+    def __init__(self, normal_render = False):
         super(Env, self).__init__()
-        self.action_space = ['u','d','l','r']
+        self.action_space = ['u','d','l','r','stay']
         self.action_size = len(self.action_space)
         self.observation_space = spaces.Box(
             # low= np.array([0.]* (NUM_NODES+1 + 1 + 4)), 
             # high = np.concatenate(
             #     (np.concatenate((np.array([np.float32(MAX_SOC)]), np.array([np.float32(NUM_NODES)]*4))), 
             #     np.array([np.float32(5)]*(NUM_NODES+1)))), 
-            low= np.array([0.]* (1 + 1 + 4)), 
-            high = np.concatenate(
-                (np.concatenate((np.array([np.float32(MAX_SOC)]), np.array([np.float32(NUM_NODES)]*4))), 
-                np.array([np.float32(3)]*(1)))), 
+            low= np.array([0.]* (1 + 4)), 
+            high =np.concatenate((np.array([np.float32(MAX_SOC)]), np.array([np.float32(NUM_NODES)]*4))), 
             dtype= np.float32)
 
         self.title('Taxi')
         self.geometry('{0}x{1}'.format(HEIGHT * UNIT, WIDTH * UNIT))
         self.shapes = self.load_images()
         self.canvas = self._build_canvas()
+        self.normal_render = normal_render
         
         self.counter = 0
         self.rewards = []
         self.goal = []
-
         self.ev_soc = MAX_SOC
         self.passenger = False
+        self.no_pickup_counter = 0
+        self.no_drop_counter = 0
 
         self.car_location = self.canvas.coords(self.car)
         self.cs_location = [4, 4]
@@ -111,6 +111,9 @@ class Env(tk.Tk):
 
         self.rewards.clear()
         self.goal.clear()
+
+        self.no_pickup_counter = 0
+        self.no_drop_counter = 0
 
         self.taken_locations = [self.taken_locations[0]]
 
@@ -177,9 +180,15 @@ class Env(tk.Tk):
                 if reward['reward'] == CHARGING_REWARD and not self.passenger:
                     self.ev_soc += CHARGING_RATE
 
+        if not self.passenger:
+            rewards -= PICKUP_REWARD
+
+        if self.passenger and self.no_drop_counter >= 8:
+            rewards -= PICKUP_REWARD * 2
+
         if self.ev_soc <= 0:
             check_list['if_done'] = True
-            rewards -= NOBATTERY_PENALTY
+            rewards -= (MAX_STEPS - self.counter) * 1
 
         if self.counter == MAX_STEPS:
             check_list['if_done'] = True
@@ -191,7 +200,6 @@ class Env(tk.Tk):
     def coords_to_state(self, coords):
         x = int((coords[0] - UNIT / 2) / UNIT)
         y = int((coords[1] - UNIT / 2) / UNIT)
-        # print(x,y)
         return [x,y]
 
     def state_to_node(self, coords):
@@ -213,12 +221,15 @@ class Env(tk.Tk):
 
     def reset(self):
         self.update()
-        time.sleep(0.5)
+        if self.normal_render:
+            time.sleep(0.5)
         x, y = self.canvas.coords(self.car)
         self.canvas.move(self.car, UNIT / 2 - x, UNIT / 2 - y)
         self.reset_rewards()
         self.ev_soc = MAX_SOC
         self.counter = 0
+        self.no_pickup_counter = 0
+        self.no_drop_counter = 0
         return self.get_state()
 
     #TODO
@@ -234,6 +245,11 @@ class Env(tk.Tk):
 
         if check['if_goal']:
             self.reset_rewards()
+
+        if not self.passenger:
+            self.no_pickup_counter += 1
+        elif self.passenger:
+            self.no_drop_counter += 1
 
         self.canvas.tag_raise(self.car)
 
@@ -268,5 +284,6 @@ class Env(tk.Tk):
         return s_
 
     def render(self):
-        time.sleep(0.07)
+        if self.normal_render:
+            time.sleep(0.07)
         self.update()
