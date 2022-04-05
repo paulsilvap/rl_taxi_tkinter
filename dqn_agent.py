@@ -40,6 +40,7 @@ class DQN(nn.Module):
     def __init__(self, in_features, n_actions, name, chkpt_dir, lr = 0.001):
         super().__init__()
         self.checkpoint_dir = chkpt_dir
+        os.makedirs(self.checkpoint_dir, exist_ok=True)
         self.checkpoint_file = os.path.join(self.checkpoint_dir, f'{name}.pt')
 
         self.net = nn.Sequential(
