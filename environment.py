@@ -23,7 +23,7 @@ CHARGING_RATE = 2.0
 
 class Env(tk.Tk):
     def __init__(self, normal_render = False):
-        super(Env, self).__init__()
+        super().__init__()
         self.action_space = ['u','d','l','r','stay']
         self.action_size = len(self.action_space)
         self.observation_space = spaces.Box(
@@ -50,7 +50,7 @@ class Env(tk.Tk):
         self.no_drop_counter = 0
 
         self.car_location = self.canvas.coords(self.car)
-        self.cs_location = [4, 4]
+        self.cs_location = [WIDTH-1, HEIGHT-1]
         self.set_reward(self.cs_location, CHARGING_REWARD)
         self.user_location = self.random_location()
         self.set_reward(self.user_location, PICKUP_REWARD)
@@ -115,7 +115,7 @@ class Env(tk.Tk):
         self.no_pickup_counter = 0
         self.no_drop_counter = 0
 
-        self.taken_locations = [self.taken_locations[0]]
+        self.taken_locations = [self.coords_to_state(self.canvas.coords(self.car))]
 
         self.set_reward(self.cs_location, CHARGING_REWARD)
         self.user_location = self.random_location()
@@ -265,17 +265,19 @@ class Env(tk.Tk):
         if action == 0:  # up
             if s[1] > UNIT:
                 base_action[1] -= UNIT
+                self.ev_soc -= DISCHARGE_RATE
         elif action == 1:  # down
             if s[1] < (HEIGHT - 1) * UNIT:
                 base_action[1] += UNIT
+                self.ev_soc -= DISCHARGE_RATE
         elif action == 2:  # right
             if s[0] < (WIDTH - 1) * UNIT:
                 base_action[0] += UNIT
+                self.ev_soc -= DISCHARGE_RATE
         elif action == 3:  # left
             if s[0] > UNIT:
                 base_action[0] -= UNIT
-
-        self.ev_soc -= DISCHARGE_RATE
+                self.ev_soc -= DISCHARGE_RATE
 
         self.canvas.move(target, base_action[0], base_action[1])
 
