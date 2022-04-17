@@ -2,17 +2,18 @@ import numpy as np
 from environment import Env
 from dqn_agent import DQNAgent
 
-EPISODES = 3000
-GAMMA = 0.7
+EPISODES = 10000
+GAMMA = 0.5
 EPSILON = 1.0
 BATCH = 32
-EPS_DEC = 5e-6
-LR = 1e-3
+EPS_DEC = 5e-7
+LR = 25e-5
 
 if __name__ == "__main__":
-    env = Env()
+    """Set normal_render = True to see the environment at normal speed"""
+    env = Env(normal_render=False)
     agent = DQNAgent(GAMMA, EPSILON, env.observation_space.shape[0], env.action_size, BATCH, eps_dec=EPS_DEC, 
-        name = f'lr_{LR}_batch_{BATCH}_dec_{EPS_DEC}_{EPISODES}_gamma_{GAMMA}', lr=LR)
+        name = f'lr{LR}_batch{BATCH}_dec{EPS_DEC}_gamma{GAMMA}', lr=LR)
 
     best_avg_score = best_score = -np.inf
     load_checkpoint = False
@@ -32,6 +33,7 @@ if __name__ == "__main__":
             global_step += 1
 
             action = agent.choose_action(state)
+            # action = int(input("Enter next action: "))
             next_state, reward, done = env.step(action)
             
             score += reward

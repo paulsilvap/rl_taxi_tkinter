@@ -4,3 +4,4 @@ torch
 gym
 networkx
 matplotlib
+tensorboard
