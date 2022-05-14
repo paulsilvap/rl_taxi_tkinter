@@ -5,3 +5,6 @@ gym
 networkx
 matplotlib
 tensorboard
+geopandas
+osmnx
+shapely
