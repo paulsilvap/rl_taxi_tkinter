@@ -1,6 +1,4 @@
-from pickle import TRUE
 from dqn_agent import DQNAgent
-import matplotlib.pyplot as plt
 import numpy as np
 from multi_env import Env
 

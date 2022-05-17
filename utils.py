@@ -38,7 +38,7 @@ def update_edges(result, groups, date):
 
     return label_speed(result), result
 
-@profile
+# @profile
 def label_speed(gdf_edges):
     mask_101 = gdf_edges['ROAD_RANK'] == '101'
     mask_103 = (gdf_edges['ROAD_RANK'] == '103') | (gdf_edges['ROAD_RANK'] == '106')
