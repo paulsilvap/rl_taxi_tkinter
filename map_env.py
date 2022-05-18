@@ -44,7 +44,10 @@ class Env(tk.Tk):
         self.intersections = gdf_nodes
         self.cs = gdf_cs
         self.roads = gdf_edges
-        self.aux_road_result = result
+        self.aux_road_result = result.drop(columns=result.geometry.name)
+        self.mask_101 = self.aux_road_result['ROAD_RANK'] == '101'
+        self.mask_103 = (self.aux_road_result['ROAD_RANK'] == '103') | (self.aux_road_result['ROAD_RANK'] == '106')
+        self.mask_107 = self.aux_road_result['ROAD_RANK'] == '107'
         self.roads_color = [(0.0, 0.8, 0.0, 1.0), (0.8, 0.8, 0.0, 1.0), (0.8, 0.0, 0.0, 1.0)]
         self.traffic = s_df.groupby('ts')
         self.traffic_time = iter(list(self.traffic.groups.keys()))
@@ -84,13 +87,13 @@ class Env(tk.Tk):
         self.ax.get_xaxis().set_visible(False)
         self.ax.get_yaxis().set_visible(False)
         self.ax = self.roads['geometry'].plot(ax=self.ax, color=self.color_roads(), lw=1, alpha=None, zorder=-1)
+        self.roads = self.roads.drop(columns=self.roads.geometry.name)
         # self.ax.scatter(self.intersections['geometry'].x, self.intersections['geometry'].y, s = 2, zorder=-1, color='k')
+        self.intersections = self.intersections.drop(columns=self.intersections.geometry.name)
         # self.ax.set(xlim = (127.05693, 127.19335), ylim = (35.81962, 35.88782))
         self.ax.set(xlim = (127.09, 127.15), ylim = (35.83, 35.86))
         self.fig.tight_layout()
         self.ax.scatter(self.cs['geometry'].x, self.cs['geometry'].y, color='xkcd:brown')
-        # self.ax.scatter(self.intersections.loc['3060202801'].x,self.intersections.loc['3060202801'].y, color='r')
-        # print(self.graph.adj['3060202801'])
 
     def set_cs(self):
         self.cs_info = self.cs.T.to_dict()
@@ -157,19 +160,17 @@ class Env(tk.Tk):
     def update_roads(self, groups, date):
         s = groups.get_group(date).loc[:, 'LINK_ID':].set_index('LINK_ID')['speed']
         self.aux_road_result['speed'] = self.aux_road_result['LINK_ID'].map(s).fillna(self.aux_road_result['speed'])
-        self.roads = label_speed(self.aux_road_result)
+        self.roads = label_speed(self.aux_road_result, self.mask_101, self.mask_103, self.mask_107)
     
     # @profile
     def update_graph(self):
         if self.counter >= self.traffic_counter + 1:
             self.traffic_counter += 1
             time = next(self.traffic_time)
-            # print(f'{self.traffic_counter=},{self.counter=},{time=}')
             self.update_roads(self.traffic, time)
             self.ax.collections[0].set_color(self.color_roads())
-            intersections = self.intersections.drop(columns=self.intersections.geometry.name)
-            roads = self.roads.drop(columns=self.roads.geometry.name)
-            self.graph = ox.graph_from_gdfs(intersections, roads)
+            roads = self.roads.loc[:, ['LENGTH','state']]
+            self.graph = ox.graph_from_gdfs(self.intersections, roads)
 
     def discharge_ev(self, index):
         if self.ev_info[index] != 0.4:
