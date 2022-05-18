@@ -43,11 +43,12 @@ class Env(tk.Tk):
         self.graph = G
         self.intersections = gdf_nodes
         self.cs = gdf_cs
+        self.cs_nodes = self.cs['NODE_ID'].values
         self.roads = gdf_edges
         self.aux_road_result = result.drop(columns=result.geometry.name)
-        self.mask_101 = self.aux_road_result['ROAD_RANK'] == '101'
-        self.mask_103 = (self.aux_road_result['ROAD_RANK'] == '103') | (self.aux_road_result['ROAD_RANK'] == '106')
-        self.mask_107 = self.aux_road_result['ROAD_RANK'] == '107'
+        self.mask_101 = (self.aux_road_result['ROAD_RANK'] == '101').values
+        self.mask_103 = ((self.aux_road_result['ROAD_RANK'] == '103') | (self.aux_road_result['ROAD_RANK'] == '106')).values
+        self.mask_107 = (self.aux_road_result['ROAD_RANK'] == '107').values
         self.roads_color = [(0.0, 0.8, 0.0, 1.0), (0.8, 0.8, 0.0, 1.0), (0.8, 0.0, 0.0, 1.0)]
         self.traffic = s_df.groupby('ts')
         self.traffic_time = iter(list(self.traffic.groups.keys()))
@@ -113,7 +114,7 @@ class Env(tk.Tk):
     # @profile
     def random_location(self):
         picked_node = self.intersections.sample()
-        while (self.cs['NODE_ID'] == picked_node.index.values[0]).any() or (picked_node.index.values[0] in self.taken_nodes):
+        while (self.cs_nodes == picked_node.index.values[0]).any() or (picked_node.index.values[0] in self.taken_nodes):
             picked_node = self.intersections.sample()
         loc = [picked_node.iloc[0]['x'], picked_node.iloc[0]['y']]
         self.taken_nodes.append(picked_node.index.values[0])
@@ -169,7 +170,12 @@ class Env(tk.Tk):
             time = next(self.traffic_time)
             self.update_roads(self.traffic, time)
             self.ax.collections[0].set_color(self.color_roads())
-            roads = self.roads.loc[:, ['LENGTH','state']]
+            # print(self.roads.columns)
+            # roads = self.roads.loc[:, ['LENGTH','state']]
+            roads = self.roads.iloc[:, [2,5]]
+            # roads = self.roads.filter(['LENGTH','state'])
+            # roads = self.roads[['LENGTH','state']]
+            # print(roads)
             self.graph = ox.graph_from_gdfs(self.intersections, roads)
 
     def discharge_ev(self, index):

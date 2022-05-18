@@ -30,9 +30,9 @@ def create_edges(edge_list, groups, date):
     result = pd.merge(edge_list, groups.get_group(date).loc[:, 'LINK_ID':], how='left', on='LINK_ID')
     result['speed'].fillna(result['MAX_SPD'], inplace=True)
 
-    mask_101 = result['ROAD_RANK'] == '101'
-    mask_103 = (result['ROAD_RANK'] == '103') | (result['ROAD_RANK'] == '106')
-    mask_107 = result['ROAD_RANK'] == '107'
+    mask_101 = result['ROAD_RANK'].values == '101'
+    mask_103 = (result['ROAD_RANK'].values == '103') | (result['ROAD_RANK'].values == '106')
+    mask_107 = result['ROAD_RANK'].values == '107'
 
     return label_speed(result, mask_101, mask_103, mask_107), result
 
@@ -45,6 +45,7 @@ def create_edges(edge_list, groups, date):
 # @profile
 def label_speed(gdf_edges, mask_101, mask_103, mask_107):
     aux = gdf_edges['speed'].values
+    length = gdf_edges['LENGTH'].values
     green_mask = (mask_101 & (aux > 80)) | (mask_103 & (aux > 50)) | (mask_107 & (aux > 25))
     yellow_mask = ((mask_101 & ((aux >= 40) & (aux <= 80))) | (mask_103 & ((aux >= 30) & (aux <= 50))) | (mask_107 & ((aux >= 15) & (aux <= 25))))
     red_mask = (mask_101 & (aux < 40)) | (mask_103 & (aux < 30)) | (mask_107 & (aux < 15))
@@ -52,8 +53,8 @@ def label_speed(gdf_edges, mask_101, mask_103, mask_107):
     gdf_edges.loc[yellow_mask, 'TC'] = 'yellow'
     gdf_edges.loc[red_mask, 'TC'] = 'red'
 
-    aux_state = (gdf_edges['LENGTH'].values * 6) / (aux * 100)
-    gdf_edges['state'] = aux_state.round(0).astype('Int8') + 1
+    aux_state = (length * 6) / (aux * 100)
+    gdf_edges['state'] = aux_state.round(0) + 1
 
     return gdf_edges.set_index(['F_NODE','T_NODE','LINK_ID'])
 
