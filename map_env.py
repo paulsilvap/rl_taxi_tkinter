@@ -49,7 +49,7 @@ class Env(tk.Tk):
         self.mask_101 = (self.aux_road_result['ROAD_RANK'] == '101').values
         self.mask_103 = ((self.aux_road_result['ROAD_RANK'] == '103') | (self.aux_road_result['ROAD_RANK'] == '106')).values
         self.mask_107 = (self.aux_road_result['ROAD_RANK'] == '107').values
-        self.roads_color = [(0.0, 0.8, 0.0, 1.0), (0.8, 0.8, 0.0, 1.0), (0.8, 0.0, 0.0, 1.0)]
+        self.color_mapper = {'green': (0.0, 0.8, 0.0, 1.0), 'yellow': (0.8, 0.8, 0.0, 1.0), 'red': (0.8, 0.0, 0.0, 1.0)}
         self.traffic = s_df.groupby('ts')
         self.traffic_time = iter(list(self.traffic.groups.keys()))
 
@@ -77,11 +77,8 @@ class Env(tk.Tk):
         self.set_users()
         self.canvas.get_tk_widget().pack(side='top',fill='both', expand=True)
 
-    # @profile
     def color_roads(self):
-        edges_types = self.roads['TC'].value_counts()
-        color_mapper = pd.Series(self.roads_color, index=edges_types.index).to_dict()
-        return [color_mapper[v] for v in self.roads['TC']]
+        return [self.color_mapper[v] for v in self.roads['TC'].values]
 
     def create_plot(self):
         self.fig, self.ax = plt.subplots(figsize=(10,7))
@@ -111,14 +108,13 @@ class Env(tk.Tk):
             elif cs_state <= 0:
                 self.cs_info[k]['waiting_time'] = random.randrange(0,80,TIME_STEP_DURATION)
 
-    # @profile
     def random_location(self):
-        picked_node = self.intersections.sample()
-        while (self.cs_nodes == picked_node.index.values[0]).any() or (picked_node.index.values[0] in self.taken_nodes):
-            picked_node = self.intersections.sample()
-        loc = [picked_node.iloc[0]['x'], picked_node.iloc[0]['y']]
-        self.taken_nodes.append(picked_node.index.values[0])
-        return loc, picked_node.index.values[0]
+        picked_node = random.choice(self.intersections.index.values)
+        while (picked_node in self.cs_nodes) or (picked_node in self.taken_nodes):
+            picked_node = random.choice(self.intersections.index.values)
+        loc = [self.intersections.at[picked_node, 'x'], self.intersections.at[picked_node, 'y']]
+        self.taken_nodes.append(picked_node)
+        return loc, picked_node
 
     def _build_canvas(self):
         # self.attributes('-fullscreen', True)
@@ -169,13 +165,9 @@ class Env(tk.Tk):
             self.traffic_counter += 1
             time = next(self.traffic_time)
             self.update_roads(self.traffic, time)
-            self.ax.collections[0].set_color(self.color_roads())
-            # print(self.roads.columns)
-            # roads = self.roads.loc[:, ['LENGTH','state']]
+            if self.show:
+                self.ax.collections[0].set_color(self.color_roads())
             roads = self.roads.iloc[:, [2,5]]
-            # roads = self.roads.filter(['LENGTH','state'])
-            # roads = self.roads[['LENGTH','state']]
-            # print(roads)
             self.graph = ox.graph_from_gdfs(self.intersections, roads)
 
     def discharge_ev(self, index):
@@ -224,7 +216,6 @@ class Env(tk.Tk):
         self.update_cs()
         self.update_graph()
 
-    # @profile
     def reset_rewards(self, index):
         self.rewards.clear()
 
