@@ -68,7 +68,7 @@ def graph_from_gdfs(gdf_edges):
 
     return G
 
-def create_map():
+def create_map(days=1):
     with open('./traffic_data/cs/cs_data.json', 'r') as f:
         cs = json.load(f)
 
@@ -119,17 +119,24 @@ def create_map():
     # for l in list(link['LINK_ID']):
         # print(l)
 
-    s_df = pd.read_csv('./traffic_data/speed/211201.csv')
+    daily_traffic = {}
 
-    s_df.columns = ['ts','LINK_ID','speed']
+    for d in range(1, days+1):
+        if d < 10:
+            traffic_df = pd.read_csv(f'./traffic_data/speed/21120{d}.csv')
+        else:
+            traffic_df = pd.read_csv(f'./traffic_data/speed/2112{d}.csv')
 
-    ''' Reduce memory footprint of data'''
-    s_df['ts'] = s_df['ts'].astype("category")
-    s_df['LINK_ID'] = pd.to_numeric(s_df['LINK_ID'], downcast='unsigned')
-    # s_df['LINK_ID'] = s_df['LINK_ID'].astype(str)
-    s_df['speed'] = s_df['speed'].astype('Int32')
+        traffic_df.columns = ['ts', 'LINK_ID', 'speed']
 
-    groups = s_df.groupby('ts')
+        traffic_df['ts'] = traffic_df['ts'].astype('category')
+        traffic_df['LINK_ID'] = pd.to_numeric(traffic_df['LINK_ID'], downcast='unsigned')
+        traffic_df['speed'] = traffic_df['speed'].astype('Int32')
+
+        # print(len(list(traffic_df.groupby('ts').groups.keys())))
+        daily_traffic[d] = traffic_df
+
+    groups = daily_traffic[1].groupby('ts')
 
     date_list = list(groups.groups.keys())
 
@@ -167,4 +174,4 @@ def create_map():
     gdf_cs[['NODE_ID','geometry']] = gdf_cs.apply(lambda row: near(row['geometry']), axis=1, result_type='expand')
     gdf_cs['position'] = gdf_cs.apply(lambda row: [row['geometry'].x,row['geometry'].y], axis=1)
 
-    return gdf_edges, gdf_nodes, G, gdf_cs, s_df, result
+    return gdf_edges, gdf_nodes, G, gdf_cs, daily_traffic, result
