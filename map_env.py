@@ -11,7 +11,8 @@ from gym import spaces
 from random import randint
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
-gdf_edges, gdf_nodes, G, gdf_cs, s_df, result = create_map()
+DAYS = 2
+gdf_edges, gdf_nodes, G, gdf_cs, s_df, result = create_map(DAYS)
 
 NUMBER_OF_PASSENGERS = 10
 MAX_NUMBER_OF_CONNECTIONS = int((max(sorted((d for _, d in G.degree()), reverse= True)))/2)
@@ -48,8 +49,15 @@ class Env(tk.Tk):
         self.mask_103 = ((self.aux_road_result['ROAD_RANK'] == '103') | (self.aux_road_result['ROAD_RANK'] == '106')).values
         self.mask_107 = (self.aux_road_result['ROAD_RANK'] == '107').values
         self.color_mapper = {'green': (0.0, 0.8, 0.0, 1.0), 'yellow': (0.8, 0.8, 0.0, 1.0), 'red': (0.8, 0.0, 0.0, 1.0)}
-        self.traffic = s_df.groupby('ts')
+        self.day = 1
+        self.max_days = DAYS
+        self.traffic = s_df[self.day].groupby('ts')
         self.traffic_time = iter(list(self.traffic.groups.keys()))
+        self.daily_graph = {}
+        self.daily_roads = {}
+        for d in range(1, self.max_days+1):
+            self.daily_graph[d] = {}
+            self.daily_roads[d] = {}
 
         self.title('Jeonju')
         self.create_plot()
@@ -153,20 +161,28 @@ class Env(tk.Tk):
 
     # @profile
     def update_roads(self, groups, date):
-        s = groups.get_group(date).set_index('LINK_ID')['speed']
-        self.aux_road_result['speed'] = self.aux_road_result['LINK_ID'].map(s).fillna(self.aux_road_result['speed'])
-        self.roads = label_speed(self.aux_road_result, self.mask_101, self.mask_103, self.mask_107)
+        if self.traffic_counter in self.daily_roads[self.day].keys():
+            self.roads = self.daily_roads[self.day][self.traffic_counter]
+        else:
+            s = groups.get_group(date).set_index('LINK_ID')['speed']
+            self.aux_road_result['speed'] = self.aux_road_result['LINK_ID'].map(s).fillna(self.aux_road_result['speed'])
+            self.roads = label_speed(self.aux_road_result, self.mask_101, self.mask_103, self.mask_107)
+            self.daily_roads[self.day][self.traffic_counter] = self.roads
     
     # @profile
     def update_graph(self):
         if self.counter >= self.traffic_counter + 1:
-            self.traffic_counter += 1
             time = next(self.traffic_time)
             self.update_roads(self.traffic, time)
+            if self.traffic_counter in self.daily_graph[self.day].keys():
+                self.graph = self.daily_graph[self.day][self.traffic_counter]
+            else:
+                roads = self.roads.iloc[:, [2,5]]
+                self.graph = graph_from_gdfs(roads)
+                self.daily_graph[self.day][self.traffic_counter] = self.graph
             if self.show:
                 self.ax.collections[0].set_color(self.color_roads())
-            roads = self.roads.iloc[:, [2,5]]
-            self.graph = graph_from_gdfs(roads)
+            self.traffic_counter += 1
 
     def discharge_ev(self, index):
         if self.ev_info[index] != 0.4:
@@ -404,6 +420,12 @@ class Env(tk.Tk):
         if self.show:
             self.render()
 
+        if self.day % self.max_days != 0:
+            self.day += 1
+        else:
+            self.day = 1
+
+        self.traffic = s_df[self.day].groupby('ts')
         self.traffic_time = iter(list(self.traffic.groups.keys()))
 
         self.ev_info[0]['SOC'] = MAX_SOC

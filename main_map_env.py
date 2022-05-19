@@ -2,11 +2,11 @@ from dqn_agent import DQNAgent
 import numpy as np
 from map_env import Env
 
-EPISODES = 10000
+EPISODES = 50000
 GAMMA = 0.9
 EPSILON = 1.0
 BATCH = 32
-EPS_DEC = (0.99 / (EPISODES * 0.8)) / 40
+EPS_DEC = (0.99 / (EPISODES * 0.8)) / 80
 LR = 1e-3
 dir = 'chkpt/map'
 
@@ -14,11 +14,12 @@ from torch.utils.tensorboard import SummaryWriter
 
 if __name__ == "__main__":
     """Set normal_render = True to see the environment at normal speed"""
+    """Set show = True to show the animation of the environment"""
 
     writer = SummaryWriter(f'{dir}/{EPISODES}_{EPS_DEC}')
     # writer = SummaryWriter(f'{dir}/profiler')
 
-    env = Env(normal_render=False)
+    env = Env(normal_render=False, show=False)
     agent = DQNAgent(GAMMA, 
                     EPSILON, 
                     env.observation_space.shape[0], 
