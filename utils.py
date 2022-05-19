@@ -58,6 +58,16 @@ def label_speed(gdf_edges, mask_101, mask_103, mask_107):
 
     return gdf_edges.set_index(['F_NODE','T_NODE','LINK_ID'])
 
+# @profile
+def graph_from_gdfs(gdf_edges):
+    G = nx.MultiDiGraph()
+
+    attr_names = gdf_edges.columns.to_list()
+    for (u, v, _), attr_vals in zip(gdf_edges.index, gdf_edges.values):
+        G.add_edge(u, v, key=0, **{name: val for name, val in zip(attr_names, attr_vals)})
+
+    return G
+
 def create_map():
     with open('./traffic_data/cs/cs_data.json', 'r') as f:
         cs = json.load(f)
@@ -131,7 +141,8 @@ def create_map():
 
     assert gdf_nodes.index.is_unique and gdf_edges.index.is_unique
 
-    G = ox.graph_from_gdfs(gdf_nodes, gdf_edges)
+    # G = ox.graph_from_gdfs(gdf_nodes, gdf_edges)
+    G = graph_from_gdfs(gdf_edges)
 
     # g_osm = ox.graph_from_bbox(35.88782,35.81962,127.19335,127.05693, network_type="drive")
     # _, ax = ox.plot_graph(g_osm, ax=ax, show=False, close=False, node_size=0)
