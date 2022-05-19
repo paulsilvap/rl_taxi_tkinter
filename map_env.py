@@ -2,13 +2,11 @@ import random
 import pdb
 import time
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
-import osmnx as ox
 import networkx as nx
 import tkinter as tk
 
-from utils import create_map, label_speed
+from utils import create_map, label_speed, graph_from_gdfs
 from gym import spaces
 from random import randint
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -96,7 +94,7 @@ class Env(tk.Tk):
     def set_cs(self):
         self.cs_info = self.cs.T.to_dict()
 
-        for k, v in self.cs_info.items():
+        for k in self.cs_info.keys():
             self.cs_info[k]['waiting_time'] = (random.randrange(0, 80, TIME_STEP_DURATION))
             self.info['cs'][k] = 0
 
@@ -155,7 +153,7 @@ class Env(tk.Tk):
 
     # @profile
     def update_roads(self, groups, date):
-        s = groups.get_group(date).loc[:, 'LINK_ID':].set_index('LINK_ID')['speed']
+        s = groups.get_group(date).set_index('LINK_ID')['speed']
         self.aux_road_result['speed'] = self.aux_road_result['LINK_ID'].map(s).fillna(self.aux_road_result['speed'])
         self.roads = label_speed(self.aux_road_result, self.mask_101, self.mask_103, self.mask_107)
     
@@ -168,7 +166,7 @@ class Env(tk.Tk):
             if self.show:
                 self.ax.collections[0].set_color(self.color_roads())
             roads = self.roads.iloc[:, [2,5]]
-            self.graph = ox.graph_from_gdfs(self.intersections, roads)
+            self.graph = graph_from_gdfs(roads)
 
     def discharge_ev(self, index):
         if self.ev_info[index] != 0.4:
@@ -182,9 +180,6 @@ class Env(tk.Tk):
         s_ = next((x for i,x in enumerate(sample) if i==action), None)
         if s_ is not None:
             self.ev_info[index]['NODE_ID'] = s_
-            # node = self.intersections.loc[s_]
-            # self.ev_info[index]['location'] = [node['geometry'].x, node['geometry'].y]
-            # self.ev_info[index]['location'] = [node['x'], node['y']]
             self.ev_info[index]['location'] = [self.intersections.at[s_, 'x'], self.intersections.at[s_, 'y']]
             self.ev_info[index]['scatter'].set_offsets(
                 np.c_[self.ev_info[index]['location'][0], self.ev_info[index]['location'][1]])
@@ -211,8 +206,8 @@ class Env(tk.Tk):
     # @profile
     def check_done(self):
         self.counter += 1 
-        for k,v in self.user_info.items():
-                self.user_info[k]['waiting_time'] = self.counter if self.aux_counter == 0 else self.counter - self.aux_counter
+        for k in self.user_info.keys():
+            self.user_info[k]['waiting_time'] = self.counter if self.aux_counter == 0 else self.counter - self.aux_counter
         self.update_cs()
         self.update_graph()
 
@@ -250,7 +245,7 @@ class Env(tk.Tk):
 
         found = False
         if not self.passenger:
-            for k,v in self.user_info.items():
+            for k in self.user_info.keys():
                 self.user_info[k]['waiting_time'] = self.counter if self.aux_counter == 0 else self.counter - self.aux_counter
 
         # pdb.set_trace()
