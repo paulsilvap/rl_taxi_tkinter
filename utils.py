@@ -88,8 +88,8 @@ def create_map(days=1):
 
     node = node.to_crs("EPSG:4326")
     node = gpd.clip(node, mask=new_bbox)
-    node = node[node['NODE_ID'] != '3060202801']
-    node = node[node['NODE_ID'] != '3060202701']
+    node = node[node['NODE_ID'].values != '3060202801']
+    node = node[node['NODE_ID'].values != '3060202701']
     #TODO: find invalid nodes automatically
     node['NODE_ID'] = pd.to_numeric(node['NODE_ID'], downcast='unsigned')
 

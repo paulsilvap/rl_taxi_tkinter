@@ -6,7 +6,7 @@ EPISODES = 50000
 GAMMA = 0.9
 EPSILON = 1.0
 BATCH = 32
-EPS_DEC = (0.99 / (EPISODES * 0.8)) / 80
+EPS_DEC = (0.99 / (EPISODES * 0.7)) / 40
 LR = 1e-3
 dir = 'chkpt/map'
 

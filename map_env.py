@@ -19,20 +19,20 @@ MAX_NUMBER_OF_CONNECTIONS = int((max(sorted((d for _, d in G.degree()), reverse=
 NUMBER_OF_CS = len(gdf_cs)
 NUMBER_OF_ROADS = G.number_of_edges()
 NUMBER_OF_EV = 1
-MAX_SOC = 48
-DISCHARGE_RATE = 0.4
-CHARGING_RATE = 2.0
+MAX_SOC = 54
+DISCHARGE_RATE = 0.2
+CHARGING_RATE = 4.5
 MAX_STEPS = 288
 TIME_STEP_DURATION = int(60 / (MAX_STEPS / 24))
-ALPHA = 18 # Check later
-BETA = 10
+ALPHA = 18 * 2 # Check later
+BETA = 6
 OUT_OFF_BATTERY_PENALTY = MAX_STEPS - (MAX_SOC / DISCHARGE_RATE)
 
 class Env(tk.Tk):
     def __init__(self, normal_render = False, show = False):
         super().__init__()
         ''' Define the action size and the observation space'''
-        self.action_size = NUMBER_OF_CS + MAX_NUMBER_OF_CONNECTIONS + NUMBER_OF_PASSENGERS + 1
+        self.action_size = NUMBER_OF_CS + MAX_NUMBER_OF_CONNECTIONS + NUMBER_OF_PASSENGERS
         self.observation_space =  spaces.Box(
             low = np.array([0.] * (NUMBER_OF_ROADS + (NUMBER_OF_EV * 2) + (NUMBER_OF_PASSENGERS * 3) + NUMBER_OF_CS)),
             high = np.array([6.] * (NUMBER_OF_ROADS + (NUMBER_OF_EV * 2) + (NUMBER_OF_PASSENGERS * 3) + NUMBER_OF_CS), dtype=np.float32),
@@ -269,11 +269,11 @@ class Env(tk.Tk):
         if self.ev_info[index]['on_duty'] and self.user_info[self.picked_user]['NODE_ID_source'] == next_node:
             self.passenger = True
             self.user_info[self.picked_user]['waiting_time'] -= self.wt_rectifier
-            self.info['waiting_time'].append(60*self.user_info[self.picked_user]['waiting_time']/10)
+            self.info['waiting_time'].append(self.user_info[self.picked_user]['waiting_time']*TIME_STEP_DURATION)
         if self.passenger and self.user_info[self.picked_user]['NODE_ID_destination'] == next_node:
             self.user_counter += 1
-            rewards += ((ALPHA * self.user_counter* 3/4) if self.pre_pickup == 0 else 
-                            (ALPHA * self.user_counter* 3/4) / self.pre_pickup)
+            rewards += ((ALPHA * self.user_counter* 4/5) if self.pre_pickup == 0 else 
+                            (ALPHA * self.user_counter* 4/5) / self.pre_pickup)
             check_list['if_goal'] = True
             self.passenger = False
             self.ev_info[index]['on_duty'] = False
@@ -300,15 +300,15 @@ class Env(tk.Tk):
 
         # pdb.set_trace()
 
-        if self.ev_info[index]['SOC'] < 0.4 or self.counter == MAX_STEPS:
+        if self.ev_info[index]['SOC'] < DISCHARGE_RATE or self.counter == MAX_STEPS:
             check_list['if_done'] = True
-            rewards -= (MAX_STEPS - self.counter) * 2
+            rewards -= (MAX_STEPS - self.counter) * 4
 
         if check_list['if_goal']:
             self.reset_rewards(index)
         elif not self.ev_info[index]['on_duty'] and self.user_info[0]['waiting_time'] >= BETA:
-            rewards -= self.user_info[0]['waiting_time'] * 2
-            self.info['waiting_time'].append(60*self.user_info[0]['waiting_time']/10)
+            rewards -= self.user_info[0]['waiting_time'] * 3
+            self.info['waiting_time'].append(self.user_info[0]['waiting_time']*TIME_STEP_DURATION)
             self.reset_rewards(index)
 
         check_list['rewards'] = rewards
@@ -337,7 +337,7 @@ class Env(tk.Tk):
     def move_path(self, index, target, action):
         car_node = target['NODE_ID']
         
-        pass_action = MAX_NUMBER_OF_CONNECTIONS + 1
+        pass_action = MAX_NUMBER_OF_CONNECTIONS
         cs_action = pass_action + NUMBER_OF_PASSENGERS
 
         # print(f'{action=}, {self.counter=}')
@@ -372,13 +372,13 @@ class Env(tk.Tk):
             for i in range(final_length):
                 self.counter += 1
                 check = self.move_aux(index, final_route[i])
-                if target['SOC'] < 0.4 or self.counter == MAX_STEPS:
+                if target['SOC'] < DISCHARGE_RATE or self.counter == MAX_STEPS:
                     break
         else:
             self.counter += final_length
             for i in final_route:
                 check = self.move_aux(index, i)
-                if target['SOC'] < 0.4 or self.counter == MAX_STEPS:
+                if target['SOC'] < DISCHARGE_RATE or self.counter == MAX_STEPS:
                     break
 
         return check
@@ -387,7 +387,7 @@ class Env(tk.Tk):
     def step(self, action):
         # print(self.ev_info)
         # pdb.set_trace()
-        if action <= MAX_NUMBER_OF_CONNECTIONS:
+        if action < MAX_NUMBER_OF_CONNECTIONS:
             self.update_cs()
             self.counter += 1
             self.update_graph()
