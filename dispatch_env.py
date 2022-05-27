@@ -1,6 +1,7 @@
 import random
 import pdb
 import time
+import gym
 import numpy as np
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -8,50 +9,77 @@ import tkinter as tk
 
 from utils import create_map, label_speed, graph_from_gdfs
 from gym import spaces
-from random import randint
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
-DAYS = 2
-gdf_edges, gdf_nodes, G, gdf_cs, s_df, result = create_map(DAYS)
-
-NUMBER_OF_PASSENGERS = 10
-MAX_NUMBER_OF_CONNECTIONS = int((max(sorted((d for _, d in G.degree()), reverse= True)))/2)
-NUMBER_OF_CS = len(gdf_cs)
-NUMBER_OF_ROADS = G.number_of_edges()
-NUMBER_OF_EV = 1
-MAX_SOC = 54
-DISCHARGE_RATE = 0.2
-CHARGING_RATE = 4.5
-MAX_STEPS = 288
-TIME_STEP_DURATION = int(60 / (MAX_STEPS / 24))
-ALPHA = 18 * 2 # Check later
-BETA = 6
-OUT_OFF_BATTERY_PENALTY = MAX_STEPS - (MAX_SOC / DISCHARGE_RATE)
+np.random.seed(100)
 
 class Env(tk.Tk):
-    def __init__(self, normal_render = False, show = False):
+    def __init__(
+        self, 
+        normal_render = False, 
+        show = False,
+        days = 2,
+        hours_per_day = 24,
+        minutes_per_hour = 60, 
+        n_passengers = 10, 
+        n_ev = 1,
+        min_threshold = 10,     # lower bound for waiting time uniform distribution at charging station 
+        min_soc = 0,
+        max_soc = 58,           # IONIQ 5
+        charge_time = 60,       # FAST CHARGER: 50 kW DC station from 10% to 80% in minutes
+        discharge_rate = 0.2,
+        time_step_duration = 1,
+        alpha = 15,
+        beta = 20,              # minutes that passenger will wait for e-taxi
+        soc_threshold = 0.15,   # threshold for charge allocator
+        ):
         super().__init__()
-        ''' Define the action size and the observation space'''
-        # self.action_size = NUMBER_OF_CS + MAX_NUMBER_OF_CONNECTIONS + NUMBER_OF_PASSENGERS
-        self.action_size = MAX_NUMBER_OF_CONNECTIONS + NUMBER_OF_PASSENGERS
-        self.observation_space =  spaces.Box(
-            low = np.array([0.] * (NUMBER_OF_ROADS + (NUMBER_OF_EV * 2) + (NUMBER_OF_PASSENGERS * 3) + NUMBER_OF_CS)),
-            high = np.array([6.] * (NUMBER_OF_ROADS + (NUMBER_OF_EV * 2) + (NUMBER_OF_PASSENGERS * 3) + NUMBER_OF_CS), dtype=np.float32),
-            dtype = np.float32
-        )
+
+        gdf_edges, gdf_nodes, G, gdf_cs, s_df, result = create_map(days)
+
+        self.n_passenger = n_passengers
+        self.n_ev = n_ev
+        self.min_threshold = min_threshold
+        self.min_soc = min_soc
+        self.max_soc = max_soc 
+        self.charge_time = charge_time
+        self.duration = time_step_duration
+        self.max_steps = (hours_per_day * minutes_per_hour) / self.duration
+        self.charge_rate = self.max_soc / self.charge_time
+        self.discharge_rate = discharge_rate
+        self.alpha = alpha
+        self.beta = beta
+        self.soc_threshold = soc_threshold
+        # self.no_battery_penalty = self.max_steps - (self.max_soc / self.discharge_rate)
 
         self.graph = G
         self.intersections = gdf_nodes
         self.cs = gdf_cs
-        self.cs_nodes = self.cs['NODE_ID'].values
         self.roads = gdf_edges
         self.aux_road_result = result.drop(columns=result.geometry.name)
+        self.speed = s_df
+
+        self.max_neighbours = int((max(sorted((d for _, d in G.degree()), reverse= True)))/2)
+        self.n_cs = len(self.cs)
+        self.n_roads = self.graph.number_of_edges()
+        self.charge_rate = self.max_soc / self.charge_time
+
+        ''' Define the action size and the observation space'''
+        self.action_size = self.max_neighbours
+        self.observation_space_size = (self.n_roads + (self.n_ev * 2) + (self.n_passenger * 3) + self.n_cs)
+        self.observation_space =  spaces.Box(
+            low = np.array([0.] * self.observation_space_size, dtype = np.float32),
+            high = np.array([4000000000] * self.observation_space_size, dtype=np.float32),
+            dtype = np.float32
+        )
+
+        self.cs_nodes = self.cs['NODE_ID'].values
         self.mask_101 = (self.aux_road_result['ROAD_RANK'] == '101').values
         self.mask_103 = ((self.aux_road_result['ROAD_RANK'] == '103') | (self.aux_road_result['ROAD_RANK'] == '106')).values
         self.mask_107 = (self.aux_road_result['ROAD_RANK'] == '107').values
         self.color_mapper = {'green': (0.0, 0.8, 0.0, 1.0), 'yellow': (0.8, 0.8, 0.0, 1.0), 'red': (0.8, 0.0, 0.0, 1.0)}
         self.day = 1
-        self.max_days = DAYS
+        self.max_days = days
         self.traffic = s_df[self.day].groupby('ts')
         self.traffic_time = iter(list(self.traffic.groups.keys()))
         self.daily_graph = {}
@@ -70,7 +98,7 @@ class Env(tk.Tk):
         self.aux_counter = 0
         self.traffic_counter = 0
         self.rewards = []
-        self.passenger = False
+        # self.passenger = False
         self.user_counter = 0
         self.waiting_time = 0
         self.wt_rectifier = 0
@@ -78,6 +106,7 @@ class Env(tk.Tk):
         self.charging_counter = 0
         self.info = {}
         self.info['waiting_time'] = []
+        self.info['ev_wt'] = []
         self.info['cs'] = {}
 
         self.set_cs()
@@ -104,16 +133,17 @@ class Env(tk.Tk):
         self.cs_info = self.cs.T.to_dict()
 
         for k in self.cs_info.keys():
-            self.cs_info[k]['waiting_time'] = (random.randrange(0, 80, TIME_STEP_DURATION))
+            self.cs_info[k]['waiting_time'] = (random.randrange(self.min_threshold, self.charge_time, self.duration))
+            self.cs_info[k]['ev_id'] = []
             self.info['cs'][k] = 0
 
     def update_cs(self):
         for k,v in self.cs_info.items():
             cs_state = v['waiting_time']
-            if cs_state > 5:
-                self.cs_info[k]['waiting_time'] = cs_state - TIME_STEP_DURATION
+            if cs_state > 0:
+                self.cs_info[k]['waiting_time'] = cs_state - self.duration
             elif cs_state <= 0:
-                self.cs_info[k]['waiting_time'] = random.randrange(0,80,TIME_STEP_DURATION)
+                self.cs_info[k]['waiting_time'] = random.randrange(self.min_threshold, self.charge_time, self.duration)
 
     def random_location(self):
         picked_node = random.choice(self.intersections.index.values)
@@ -129,15 +159,20 @@ class Env(tk.Tk):
         
         self.ev_info = {}
         self.taken_nodes = []
-        for i in range(NUMBER_OF_EV):
+        for i in range(self.n_ev):
             self.ev_info[i] = {}
             location, node = self.random_location()
             self.ev_info[i]['location'] = location
             self.ev_info[i]['NODE_ID'] = node
-            self.ev_info[i]['SOC'] = MAX_SOC
-            self.ev_info[i]['on_duty'] = False
-            self.ev_info[i]['stand_by'] = True
+            self.ev_info[i]['SOC'] = self.max_soc
+            self.ev_info[i]['status'] = 'idle'
             self.ev_info[i]['scatter'] = self.ax.scatter(self.ev_info[i]['location'][0], self.ev_info[i]['location'][1], color='b', marker='s')
+            self.ev_info[i]['passenger'] = -1
+            self.ev_info[i]['route'] = None
+            self.ev_info[i]['timer'] = 0
+            # self.ev_info[i]['charging_time'] = 0
+            self.ev_info[i]['charging'] = False
+            self.ev_info[i]['serving'] = False
         
         return canvas
 
@@ -151,12 +186,13 @@ class Env(tk.Tk):
         self.user_info[i]['NODE_ID_destination'] = dest_node
         self.user_info[i]['scatter_destination'] = self.ax.scatter(self.user_info[i]['destination'][0], self.user_info[i]['destination'][1], color='m', marker='X')
         self.user_info[i]['waiting_time'] = 0
+        self.user_info[i]['status'] = 'standing'
             # self.info['waiting_time'][i] = 0
 
     def set_users(self):
         self.user_info = {}
         
-        for i in range(NUMBER_OF_PASSENGERS):
+        for i in range(self.n_passenger):
             self.user_info[i] = {}
             self.set_user_info(i)
 
@@ -173,24 +209,34 @@ class Env(tk.Tk):
     # @profile
     def update_graph(self):
         if self.counter >= self.traffic_counter + 1:
-            time = next(self.traffic_time)
-            self.update_roads(self.traffic, time)
-            if self.traffic_counter in self.daily_graph[self.day].keys():
-                self.graph = self.daily_graph[self.day][self.traffic_counter]
-            else:
-                roads = self.roads.iloc[:, [2,5]]
-                self.graph = graph_from_gdfs(roads)
-                self.daily_graph[self.day][self.traffic_counter] = self.graph
-            if self.show:
-                self.ax.collections[0].set_color(self.color_roads())
+            if self.traffic_counter % 5 == 0:
+                try:
+                    time = next(self.traffic_time)
+                    self.update_roads(self.traffic, time)
+                    if self.traffic_counter in self.daily_graph[self.day].keys():
+                        self.graph = self.daily_graph[self.day][self.traffic_counter]
+                    else:
+                        roads = self.roads.iloc[:, [2,5]]
+                        self.graph = graph_from_gdfs(roads)
+                        self.daily_graph[self.day][self.traffic_counter] = self.graph
+                    if self.show:
+                        self.ax.collections[0].set_color(self.color_roads())
+                except StopIteration:
+                    print(f'{self.counter=}, {self.traffic_counter=}\n')
+                    print(f'{self.info=}\n')
+                    print(f'{self.ev_info=}\n')
+                    print(f'{self.user_info=}\n')
+                    print(f'{self.cs_info=}\n')
             self.traffic_counter += 1
 
     def discharge_ev(self, index):
-        if self.ev_info[index] != 0.4:
-            self.ev_info[index]['SOC'] = (int(self.ev_info[index]['SOC']*10) - int((DISCHARGE_RATE)*10))/10
-        else:
-            self.ev_info[index]['SOC'] = 0
+        self.ev_info[index]['SOC'] = (int(self.ev_info[index]['SOC']*10) - int((self.discharge_rate)*10))/10
+        # if self.ev_info[index]['SOC'] != DISCHARGE_RATE:
+        #     self.ev_info[index]['SOC'] = (int(self.ev_info[index]['SOC']*10) - int((DISCHARGE_RATE)*10))/10
+        # else:
+        #     self.ev_info[index]['SOC'] = 0
 
+    # @profile
     def move(self, index, target, action):
         s = target['NODE_ID']
         sample = self.graph.neighbors(s)
@@ -204,8 +250,10 @@ class Env(tk.Tk):
         else:
             s_ = s
 
-        if self.ev_info[index]['SOC'] <= MAX_SOC * 0.2:
+        if (self.ev_info[index]['SOC'] < self.max_soc * self.soc_threshold) and (self.counter < self.max_steps):
             check = self.charge_allocator(index, s_)
+        elif (self.counter < self.max_steps):
+            check = self.passenger_allocator(index, s_)
         else:
             check = self.check_if_reward(index, s_)
 
@@ -219,54 +267,85 @@ class Env(tk.Tk):
             aux_cs[k] = [l_car_to_cs, r_car_to_cs]
             cs_loc.append(l_car_to_cs + v['waiting_time'])
 
-        self.ev_info[index]['stand_by'] = False
+        self.ev_info[index]['status'] = 'charging'
         self.picked_cs = cs_loc.index(min(cs_loc))
         l_car_to_cs, r_car_to_cs = aux_cs[self.picked_cs]
-        if len(r_car_to_cs) == 1:
-            final_route = r_car_to_cs
-        else:
+        if len(r_car_to_cs) > 1:
             final_route = r_car_to_cs[1:]
-        final_length = round(l_car_to_cs / TIME_STEP_DURATION)
-
-        if self.counter + final_length >= MAX_STEPS:
-            self.wt_rectifier = 0
-            for i in range(final_length):
-                self.counter += 1
-                check = self.move_aux(index, final_route[i])
-                if self.ev_info[index]['SOC'] < DISCHARGE_RATE or self.counter == MAX_STEPS:
-                    break
         else:
-            self.counter += final_length
-            for i in final_route:
-                check = self.move_aux(index, i)
-                if self.ev_info[index]['SOC'] < DISCHARGE_RATE or self.counter == MAX_STEPS:
-                    break
+            final_route = []
+        final_length = round(l_car_to_cs / self.duration)
+        final_length = l_car_to_cs
+        if len(final_route) == 0:
+            self.ev_info[index]['timer'] = 0
+        else:
+            self.ev_info[index]['timer'] = self.graph.adj[int(target)][int(final_route[0])][0]['state']
+            self.ev_info[index]['route'] = iter(final_route)
+            
+        check = self.check_if_reward(index, target)
+        
+        return check
+
+    # @profile
+    def serve(self, index, target):
+        if self.ev_info[index]['timer'] == 1:
+            node = next(self.ev_info[index]['route'])
+            route = list(self.ev_info[index]['route'])
+            self.ev_info[index]['route'] = iter(route)
+            check = self.move_aux(index, node)
+            if len(route) > 0: 
+                self.ev_info[index]['timer'] = self.graph.adj[int(node)][int(route[0])][0]['state']
+        else:
+            self.ev_info[index]['timer'] -= 1
+            node = target['NODE_ID']
+            check = self.check_if_reward(index, node)
+
+        return check
+
+    # @profile
+    def passenger_allocator(self, index, target):
+        aux_pass = {}
+        for k, v in self.user_info.items():
+            if v['status'] == 'standing':
+                aux_pass[k] = nx.dijkstra_path_length(self.graph, target, v['NODE_ID_source'], weight='state')
+
+        picked_user = min(aux_pass, key=aux_pass.get)
+        pass_node = self.user_info[picked_user]['NODE_ID_source']
+        dest_node = self.user_info[picked_user]['NODE_ID_destination']
+        l_car_to_pass = aux_pass[picked_user]
+        r_car_to_pass = nx.dijkstra_path(self.graph, target, pass_node, weight='state')
+        pre_pickup = len(r_car_to_pass) - 1
+        l_car_to_dest, r_car_to_dest = nx.single_source_dijkstra(self.graph, pass_node, dest_node, weight='state')
+        if len(r_car_to_pass) > 1:
+            r_car_to_pass = r_car_to_pass[1:]
+        else:
+            r_car_to_pass = [] 
+        final_route = [*r_car_to_pass, *r_car_to_dest[1:]]
+        final_length = l_car_to_dest + l_car_to_pass
+
+        if len(final_route) * self.discharge_rate < self.ev_info[index]['SOC']:
+            self.user_info[picked_user]['status'] = 'served'
+            self.pre_pickup = pre_pickup
+            self.picked_user = picked_user
+            self.ev_info[index]['status'] = 'serving'
+            self.ev_info[index]['passenger'] = picked_user
+            self.ev_info[index]['timer'] = self.graph.adj[int(target)][int(final_route[0])][0]['state']
+            self.ev_info[index]['route'] = iter(final_route)
+            
+        check = self.check_if_reward(index, target)
         
         return check
 
     def get_state(self):
-        states = []
-        states.append(self.ev_info[0]['SOC'])
-        states.append(int(self.ev_info[0]['NODE_ID']))
-        for v in self.user_info.values():
-            states.append(int(v['NODE_ID_source']))
-            states.append(int(v['NODE_ID_destination']))
-            states.append(v['waiting_time'])
-        for v in self.cs_info.values():
-            states.append(v['waiting_time'])
-        for edge in self.graph.edges():
-            for v in self.graph.get_edge_data(edge[0], edge[1]).values():
-                states.append(v['state'])    
-        return np.array(states)
+        ev = [[v['SOC'],float(v['NODE_ID'])] for v in self.ev_info.values()]
+        ev = [d for data in ev for d in data]
+        user = [[float(v['NODE_ID_source']), float(v['NODE_ID_destination']), v['waiting_time']] for v in self.user_info.values()]
+        user = [d for data in user for d in data]
+        cs = [v['waiting_time'] for v in self.cs_info.values()]
+        traffic = [data['state'] for _, _, data in self.graph.edges(data=True)]
+        return np.array([*ev, *user, *cs, *traffic], dtype=np.float32)
 
     # @profile
-    def check_done(self):
-        self.counter += 1 
-        for k in self.user_info.keys():
-            self.user_info[k]['waiting_time'] = self.counter if self.aux_counter == 0 else self.counter - self.aux_counter
-        self.update_cs()
-        self.update_graph()
-
     def reset_rewards(self, index):
         self.rewards.clear()
 
@@ -274,8 +353,10 @@ class Env(tk.Tk):
             self.user_info[k]['waiting_time'] = 0
         self.aux_counter = self.counter
         self.wt_rectifier = 0
-        self.passenger = False
-        self.ev_info[index]['on_duty'] = False
+        if self.ev_info[index]['status'] != 'no_battery':
+            self.ev_info[index]['serving'] = False
+            self.ev_info[index]['status'] = 'idle'
+            self.ev_info[index]['passenger'] = -1
 
         self.taken_nodes = [self.ev_info[index]['NODE_ID']]
 
@@ -291,6 +372,15 @@ class Env(tk.Tk):
             self.user_info[k]['scatter_destination'].set_offsets(
                 np.c_[self.user_info[k]['destination'][0], self.user_info[k]['destination'][1]])
             self.user_info[k]['waiting_time'] = 0
+            self.user_info[k]['status'] = 'standing'
+
+    def charge(self, index, target):
+        if self.cs_info[self.picked_cs]['NODE_ID'] == target['NODE_ID']:
+            check = self.check_if_reward(index, target['NODE_ID'])
+        else:
+            check = self.serve(index, target)
+
+        return check
 
     # @profile
     def check_if_reward(self, index, next_node):
@@ -299,56 +389,69 @@ class Env(tk.Tk):
         check_list['if_goal'] = False
         rewards = 0
 
-        found = False
-        if not self.passenger:
+        if not self.ev_info[index]['serving']:
             for k in self.user_info.keys():
                 self.user_info[k]['waiting_time'] = self.counter if self.aux_counter == 0 else self.counter - self.aux_counter
 
         # pdb.set_trace()
+        if self.ev_info[index]['passenger'] != -1:
+            picked_user = self.ev_info[index]['passenger']
 
-        if self.ev_info[index]['on_duty'] and self.user_info[self.picked_user]['NODE_ID_source'] == next_node:
-            self.passenger = True
-            self.user_info[self.picked_user]['waiting_time'] -= self.wt_rectifier
-            self.info['waiting_time'].append(self.user_info[self.picked_user]['waiting_time']*TIME_STEP_DURATION)
-        if self.passenger and self.user_info[self.picked_user]['NODE_ID_destination'] == next_node:
-            self.user_counter += 1
-            rewards += ((ALPHA * self.user_counter* 4/5) if self.pre_pickup == 0 else 
-                            (ALPHA * self.user_counter* 4/5) / self.pre_pickup)
-            check_list['if_goal'] = True
-            self.passenger = False
-            self.ev_info[index]['on_duty'] = False
-        if ((not self.passenger) and (not self.ev_info[index]['stand_by']) and 
+            if self.ev_info[index]['status'] == 'serving' and self.user_info[picked_user]['NODE_ID_source'] == next_node:
+                
+                self.ev_info[index]['serving'] = True
+                self.info['waiting_time'].append(self.user_info[picked_user]['waiting_time']*self.duration)
+            if (
+                self.ev_info[index]['serving'] and
+                self.user_info[picked_user]['NODE_ID_destination'] == next_node):
+
+                self.user_info[picked_user]['status'] = 'standing'
+                self.user_counter += 1
+                rewards += self.alpha if self.pre_pickup == 0 else (self.alpha / self.pre_pickup)
+                check_list['if_goal'] = True
+                self.ev_info[index]['serving'] = False
+                self.ev_info[index]['status'] = 'idle'
+
+        if (
+            (not self.ev_info[index]['serving']) and
+            (self.ev_info[index]['status']) == 'charging' and 
             self.cs_info[self.picked_cs]['NODE_ID'] == next_node):
-            self.cs_waiting_time = self.cs_info[self.picked_cs]['waiting_time']
-            for _ in range(int(self.cs_waiting_time/TIME_STEP_DURATION)):
-                if self.counter == MAX_STEPS:
-                    found = True
-                    break
-                self.check_done()
-            if not found:
-                self.charging_counter += 1
+
+            if self.charging_counter == len(self.info['ev_wt']) and not self.ev_info[index]['charging']:
+                self.info['ev_wt'].append(self.cs_info[self.picked_cs]['waiting_time'])
+
+            if self.cs_info[self.picked_cs]['waiting_time'] == 0:
+                self.ev_info[index]['charging'] = True
+                charging_time = int(np.ceil((self.max_soc - self.ev_info[index]['SOC'])/self.charge_rate))
+                self.cs_info[self.picked_cs]['waiting_time'] = charging_time * self.duration
+
+            if self.ev_info[index]['charging']:
+                self.ev_info[index]['SOC'] = min(self.ev_info[index]['SOC'] + self.charge_rate, self.max_soc)
+                    
+            if self.ev_info[index]['SOC'] == self.max_soc:
                 self.info['cs'][self.picked_cs] += 1
-                charging_time = int(np.ceil((MAX_SOC - self.ev_info[index]['SOC'])/CHARGING_RATE))
-                self.cs_info[self.picked_cs]['waiting_time'] = charging_time * TIME_STEP_DURATION
-                for _ in range(charging_time):
-                    if self.counter == MAX_STEPS:
-                        found = True
-                        break
-                    self.check_done()
-                    self.ev_info[index]['SOC'] = min(self.ev_info[index]['SOC'] + CHARGING_RATE, MAX_SOC)
-                self.ev_info[index]['stand_by'] = True
+                self.charging_counter += 1
+                self.ev_info[index]['charging'] = False
+                self.ev_info[index]['status'] = 'idle'
 
         # pdb.set_trace()
 
-        if self.ev_info[index]['SOC'] < DISCHARGE_RATE or self.counter == MAX_STEPS:
-            check_list['if_done'] = True
-            rewards -= (MAX_STEPS - self.counter) * 4
+        if self.ev_info[index]['SOC'] == self.min_soc and self.ev_info[index]['status'] != 'no_battery':
+            self.ev_info[index]['status'] = 'no_battery'
+            self.info['active'] = self.counter
+            rewards -= (self.max_steps - self.counter) * 2
 
+        if self.counter == self.max_steps:
+            check_list['if_done'] = True
+            
         if check_list['if_goal']:
             self.reset_rewards(index)
-        elif not self.ev_info[index]['on_duty'] and self.user_info[0]['waiting_time'] >= BETA:
-            rewards -= self.user_info[0]['waiting_time'] * 3
-            self.info['waiting_time'].append(self.user_info[0]['waiting_time']*TIME_STEP_DURATION)
+        # elif not self.ev_info[index]['on_duty'] and self.user_info[0]['waiting_time'] >= BETA:
+        elif (
+            (self.ev_info[index]['status'] == 'idle' or self.ev_info[index]['status'] == 'no_battery') and 
+            self.user_info[0]['waiting_time'] >= self.beta):
+            rewards -= self.user_info[0]['waiting_time']
+            self.info['waiting_time'].append(self.user_info[0]['waiting_time'] * self.duration)
             self.reset_rewards(index)
 
         check_list['rewards'] = rewards
@@ -363,9 +466,6 @@ class Env(tk.Tk):
         if self.show:
             self.render()
         self.ev_info[index]['NODE_ID'] = next_node
-        # node = self.intersections.loc[next_node]
-        # self.ev_info[index]['location'] = [node['geometry'].x, node['geometry'].y]
-        # self.ev_info[index]['location'] = [node['x'], node['y']]
         self.ev_info[index]['location'] = [self.intersections.at[next_node, 'x'], self.intersections.at[next_node, 'y']]
         self.ev_info[index]['scatter'].set_offsets(
             np.c_[self.ev_info[index]['location'][0], self.ev_info[index]['location'][1]])
@@ -374,72 +474,21 @@ class Env(tk.Tk):
         return self.check_if_reward(index, next_node)
 
     # @profile
-    def move_path(self, index, target, action):
-        car_node = target['NODE_ID']
-        
-        pass_action = MAX_NUMBER_OF_CONNECTIONS
-        # cs_action = pass_action + NUMBER_OF_PASSENGERS
-
-        # print(f'{action=}, {self.counter=}')
-        # if action >= pass_action and action <= (cs_action - 1):
-        if action >= pass_action and action <= (pass_action + NUMBER_OF_PASSENGERS - 1):
-            self.picked_user = action % pass_action
-            pass_node = self.user_info[self.picked_user]['NODE_ID_source']
-            dest_node = self.user_info[self.picked_user]['NODE_ID_destination']
-            l_car_to_pass, r_car_to_pass = nx.single_source_dijkstra(self.graph, car_node, pass_node, weight='state')
-            self.pre_pickup = len(r_car_to_pass) - 1
-            l_car_to_dest, r_car_to_dest = nx.single_source_dijkstra(self.graph, pass_node, dest_node, weight='state')
-            self.wt_rectifier = round(l_car_to_dest/TIME_STEP_DURATION)
-            if len(r_car_to_pass) > 1:
-                r_car_to_pass = r_car_to_pass[1:]
-            final_route = np.concatenate([r_car_to_pass, r_car_to_dest[1:]])
-            final_length = round(l_car_to_pass/TIME_STEP_DURATION) + self.wt_rectifier
-            self.ev_info[index]['on_duty'] = True
-        # elif action >= cs_action and action <= (cs_action + NUMBER_OF_CS - 1):
-        #     self.ev_info[index]['stand_by'] = False
-        #     self.picked_cs = action % cs_action
-        #     cs_node = self.cs_info[self.picked_cs]['NODE_ID']
-        #     l_car_to_cs, r_car_to_cs = nx.single_source_dijkstra(self.graph, car_node, cs_node, weight='state')
-        #     if len(r_car_to_cs) == 1:
-        #         final_route = r_car_to_cs
-        #     else:
-        #         final_route = r_car_to_cs[1:]
-        #     final_length = round(l_car_to_cs / TIME_STEP_DURATION)
-
-        # pdb.set_trace()
-
-        if self.counter + final_length >= MAX_STEPS:
-            self.wt_rectifier = 0
-            for i in range(final_length):
-                self.counter += 1
-                check = self.move_aux(index, final_route[i])
-                if target['SOC'] < DISCHARGE_RATE or self.counter == MAX_STEPS:
-                    break
-        else:
-            self.counter += final_length
-            for i in final_route:
-                check = self.move_aux(index, i)
-                if target['SOC'] < DISCHARGE_RATE or self.counter == MAX_STEPS:
-                    break
-
-        return check
-
-    # @profile
     def step(self, action):
-        # print(self.ev_info)
-        # pdb.set_trace()
-        if action < MAX_NUMBER_OF_CONNECTIONS:
-            self.update_cs()
-            self.counter += 1
-            self.update_graph()
-            if self.show:
-                self.render()
-            for k,v in self.ev_info.items():
-                next_node = self.move(k, v, action)
-                check = self.check_if_reward(k, next_node)
-        else:
-            for k,v in self.ev_info.items():
-                check = self.move_path(k, v, action)
+        self.update_cs()
+        self.counter += 1
+        self.update_graph()
+        if self.show:
+            self.render()
+        for k,v in self.ev_info.items():
+            if v['status'] == 'idle':
+                check = self.move(k, v, action)
+            elif v['status'] == 'serving':
+                check = self.serve(k, v)
+            elif v['status'] == 'charging':
+                check = self.charge(k, v)
+            else:
+                check = self.check_if_reward(k, v['NODE_ID'])
 
         done = check['if_done']
 
@@ -447,8 +496,11 @@ class Env(tk.Tk):
             self.info['served_users'] = self.user_counter
             self.info['count'] = self.counter
             self.info['to_charge'] = self.charging_counter
+            self.info['total_calls'] = len(self.info['waiting_time'])
+            self.info['response_rate'] = self.user_counter/len(self.info['waiting_time'])
+            if 'active' not in self.info.keys():
+                self.info['active'] = self.counter
 
-        # print(self.ev_info)
         reward = check['rewards']
 
         s_ = self.get_state()
@@ -466,28 +518,87 @@ class Env(tk.Tk):
         else:
             self.day = 1
 
-        self.traffic = s_df[self.day].groupby('ts')
+        self.traffic = self.speed[self.day].groupby('ts')
         self.traffic_time = iter(list(self.traffic.groups.keys()))
 
-        self.ev_info[0]['SOC'] = MAX_SOC
         self.counter = 0
         self.traffic_counter = 0
         self.user_counter = 0
         self.charging_counter = 0
         self.info.clear()
         self.info['waiting_time'] = []
+        self.info['ev_wt'] = []
         self.info['cs'] = {}
-        self.ev_info[0]['stand_by'] = True
+        for k in self.ev_info.keys():
+            self.ev_info[k]['SOC'] = self.max_soc
+            self.ev_info[k]['timer'] = 0
+            self.ev_info[k]['route'] = None
+            self.ev_info[k]['charging'] = False
+            self.ev_info[k]['status'] = 'idle'
+            self.reset_rewards(k)
 
         for k in self.cs_info.keys():
-            self.cs_info[k]['waiting_time'] = (random.randrange(0,80,TIME_STEP_DURATION))
+            self.cs_info[k]['waiting_time'] = (random.randrange(self.min_threshold, self.charge_time, self.duration))
             self.info['cs'][k] = 0
-        self.reset_rewards(0)
+
         return self.get_state()
 
     def render(self):
         if self.normal_render:
-            time.sleep(1)
+            time.sleep(0.1)
             pass
         self.update()
         self.canvas.draw()
+
+class GymEnv(gym.Env):
+    def __init__(
+            self,
+            normal_render = False, 
+            show = False,
+            days = 2,
+            hours_per_day = 24,
+            minutes_per_hour = 60, 
+            n_passengers = 10, 
+            n_ev = 1,
+            min_threshold = 10,    
+            min_soc = 0,
+            max_soc = 58,           
+            charge_time = 60,       
+            discharge_rate = 0.2,
+            time_step_duration = 1,
+            alpha = 15,
+            beta = 20,              
+            soc_threshold = 0.15,  
+        ):
+        super().__init__()
+        self.game = Env(
+            normal_render = normal_render, 
+            show = show,
+            days = days,
+            hours_per_day = hours_per_day,
+            minutes_per_hour = minutes_per_hour, 
+            n_passengers = n_passengers, 
+            n_ev = n_ev,
+            min_threshold = min_threshold,    
+            min_soc = min_soc,
+            max_soc = max_soc,          
+            charge_time = charge_time,      
+            discharge_rate = discharge_rate,
+            time_step_duration = time_step_duration,
+            alpha = alpha,
+            beta = beta,
+            soc_threshold = soc_threshold,  
+        )
+        self.observation_space = self.game.observation_space
+        self.action_space = spaces.Discrete(self.game.action_size)
+
+    def step(self, action):
+        obs, reward, done, info = self.game.step(action)
+        return obs, reward, done, info
+
+    def render(self):
+        self.game.render()
+
+    def reset(self):
+        obs = self.game.reset()
+        return obs
