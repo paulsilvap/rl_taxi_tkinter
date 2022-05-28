@@ -3,7 +3,6 @@ import networkx as nx
 import json
 import geopandas as gpd
 import pandas as pd
-import osmnx as ox
 from shapely.geometry import Point, box
 from shapely.ops import nearest_points
 
@@ -36,18 +35,12 @@ def create_edges(edge_list, groups, date):
 
     return label_speed(result, mask_101, mask_103, mask_107), result
 
-# def update_edges(result, groups, date):
-#     s = groups.get_group(date).loc[:, 'LINK_ID':].set_index('LINK_ID')['speed']
-#     result['speed'] = result['LINK_ID'].map(s).fillna(result['speed'])
-
-#     return label_speed(result), result
-
 # @profile
 def label_speed(gdf_edges, mask_101, mask_103, mask_107):
     aux = gdf_edges['speed'].values
     length = gdf_edges['LENGTH'].values
     green_mask = (mask_101 & (aux > 80)) | (mask_103 & (aux > 50)) | (mask_107 & (aux > 25))
-    yellow_mask = ((mask_101 & ((aux >= 40) & (aux <= 80))) | (mask_103 & ((aux >= 30) & (aux <= 50))) | (mask_107 & ((aux >= 15) & (aux <= 25))))
+    yellow_mask = (mask_101 & (40 <= aux <= 80)) | (mask_103 & (30 <= aux <= 50)) | (mask_107 & (15 <= aux <= 25))
     red_mask = (mask_101 & (aux < 40)) | (mask_103 & (aux < 30)) | (mask_107 & (aux < 15))
     gdf_edges.loc[green_mask, 'TC'] = 'green'
     gdf_edges.loc[yellow_mask, 'TC'] = 'yellow'
@@ -148,7 +141,6 @@ def create_map(days=1):
 
     assert gdf_nodes.index.is_unique and gdf_edges.index.is_unique
 
-    # G = ox.graph_from_gdfs(gdf_nodes, gdf_edges)
     G = graph_from_gdfs(gdf_edges)
 
     # g_osm = ox.graph_from_bbox(35.88782,35.81962,127.19335,127.05693, network_type="drive")

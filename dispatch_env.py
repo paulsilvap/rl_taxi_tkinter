@@ -32,6 +32,7 @@ class Env(tk.Tk):
         alpha = 15,
         beta = 20,              # minutes that passenger will wait for e-taxi
         soc_threshold = 0.15,   # threshold for charge allocator
+        occurrence_rate = 0.5
         ):
         super().__init__()
 
@@ -50,7 +51,7 @@ class Env(tk.Tk):
         self.alpha = alpha
         self.beta = beta
         self.soc_threshold = soc_threshold
-        # self.no_battery_penalty = self.max_steps - (self.max_soc / self.discharge_rate)
+        self.occurrence_rate = occurrence_rate
 
         self.graph = G
         self.intersections = gdf_nodes
@@ -68,7 +69,7 @@ class Env(tk.Tk):
         self.action_size = self.max_neighbours
         self.observation_space_size = (self.n_roads + (self.n_ev * 2) + (self.n_passenger * 3) + self.n_cs)
         self.observation_space =  spaces.Box(
-            low = np.array([0.] * self.observation_space_size, dtype = np.float32),
+            low = np.array([-1.] * self.observation_space_size, dtype = np.float32),
             high = np.array([4000000000] * self.observation_space_size, dtype=np.float32),
             dtype = np.float32
         )
@@ -97,16 +98,14 @@ class Env(tk.Tk):
         self.counter = 0
         self.aux_counter = 0
         self.traffic_counter = 0
-        self.rewards = []
-        # self.passenger = False
         self.user_counter = 0
         self.waiting_time = 0
-        self.wt_rectifier = 0
         self.cs_waiting_time = 0
         self.charging_counter = 0
         self.info = {}
         self.info['waiting_time'] = []
         self.info['ev_wt'] = []
+        self.info['ev_ct'] = []
         self.info['cs'] = {}
 
         self.set_cs()
@@ -177,18 +176,44 @@ class Env(tk.Tk):
         return canvas
 
     def set_user_info(self, i):
-        source, source_node = self.random_location()
+        if np.random.random() < self.occurrence_rate:
+            self.user_info[i]['status'] = 'standing'
+            self.user_info[i]['waiting_time'] = 0
+            source, source_node = self.random_location()
+            destination, dest_node = self.random_location()
+        else:
+            self.user_info[i]['status'] = 'no_call'
+            self.user_info[i]['waiting_time'] = -1
+            source, source_node = [np.nan, np.nan], -1
+            destination, dest_node = [np.nan, np.nan], -1
+        
         self.user_info[i]['source'] = source
         self.user_info[i]['NODE_ID_source'] = source_node
-        self.user_info[i]['scatter_source'] = self.ax.scatter(self.user_info[i]['source'][0], self.user_info[i]['source'][1], color='m', marker='H')
-        destination, dest_node = self.random_location()
+        self.user_info[i]['scatter_source'] = self.ax.scatter(source[0], source[1], color='m', marker='H')
         self.user_info[i]['destination'] = destination
         self.user_info[i]['NODE_ID_destination'] = dest_node
-        self.user_info[i]['scatter_destination'] = self.ax.scatter(self.user_info[i]['destination'][0], self.user_info[i]['destination'][1], color='m', marker='X')
-        self.user_info[i]['waiting_time'] = 0
-        self.user_info[i]['status'] = 'standing'
-            # self.info['waiting_time'][i] = 0
+        self.user_info[i]['scatter_destination'] = self.ax.scatter(destination[0], destination[1], color='m', marker='X')
+            
+    def update_user_info(self, k):
+        if np.random.random() < self.occurrence_rate:
+            self.user_info[k]['status'] = 'standing'
+            self.user_info[k]['waiting_time'] = 0
+            source, source_node = self.random_location()
+            destination, dest_node = self.random_location()
+        else:
+            self.user_info[k]['status'] = 'no_call'
+            self.user_info[k]['waiting_time'] = -1
+            source, source_node = [np.nan, np.nan], -1
+            destination, dest_node = [np.nan, np.nan], -1
 
+        self.user_info[k]['source'] = source
+        self.user_info[k]['NODE_ID_source'] = source_node
+        self.user_info[k]['scatter_source'].set_offsets(np.c_[source[0], source[1]])
+        self.user_info[k]['destination'] = destination
+        self.user_info[k]['NODE_ID_destination'] = dest_node
+        self.user_info[k]['scatter_destination'].set_offsets(
+            np.c_[destination[0], destination[1]])
+            
     def set_users(self):
         self.user_info = {}
         
@@ -231,10 +256,6 @@ class Env(tk.Tk):
 
     def discharge_ev(self, index):
         self.ev_info[index]['SOC'] = (int(self.ev_info[index]['SOC']*10) - int((self.discharge_rate)*10))/10
-        # if self.ev_info[index]['SOC'] != DISCHARGE_RATE:
-        #     self.ev_info[index]['SOC'] = (int(self.ev_info[index]['SOC']*10) - int((DISCHARGE_RATE)*10))/10
-        # else:
-        #     self.ev_info[index]['SOC'] = 0
 
     # @profile
     def move(self, index, target, action):
@@ -274,8 +295,6 @@ class Env(tk.Tk):
             final_route = r_car_to_cs[1:]
         else:
             final_route = []
-        final_length = round(l_car_to_cs / self.duration)
-        final_length = l_car_to_cs
         if len(final_route) == 0:
             self.ev_info[index]['timer'] = 0
         else:
@@ -309,28 +328,29 @@ class Env(tk.Tk):
             if v['status'] == 'standing':
                 aux_pass[k] = nx.dijkstra_path_length(self.graph, target, v['NODE_ID_source'], weight='state')
 
-        picked_user = min(aux_pass, key=aux_pass.get)
-        pass_node = self.user_info[picked_user]['NODE_ID_source']
-        dest_node = self.user_info[picked_user]['NODE_ID_destination']
-        l_car_to_pass = aux_pass[picked_user]
-        r_car_to_pass = nx.dijkstra_path(self.graph, target, pass_node, weight='state')
-        pre_pickup = len(r_car_to_pass) - 1
-        l_car_to_dest, r_car_to_dest = nx.single_source_dijkstra(self.graph, pass_node, dest_node, weight='state')
-        if len(r_car_to_pass) > 1:
-            r_car_to_pass = r_car_to_pass[1:]
-        else:
-            r_car_to_pass = [] 
-        final_route = [*r_car_to_pass, *r_car_to_dest[1:]]
-        final_length = l_car_to_dest + l_car_to_pass
+        if len(aux_pass) > 0:
+            picked_user = min(aux_pass, key=aux_pass.get)
+            pass_node = self.user_info[picked_user]['NODE_ID_source']
+            dest_node = self.user_info[picked_user]['NODE_ID_destination']
+            l_car_to_pass = aux_pass[picked_user]
+            r_car_to_pass = nx.dijkstra_path(self.graph, target, pass_node, weight='state')
+            pre_pickup = len(r_car_to_pass) - 1
+            l_car_to_dest, r_car_to_dest = nx.single_source_dijkstra(self.graph, pass_node, dest_node, weight='state')
+            if len(r_car_to_pass) > 1:
+                r_car_to_pass = r_car_to_pass[1:]
+            else:
+                r_car_to_pass = [] 
+            final_route = [*r_car_to_pass, *r_car_to_dest[1:]]
+            # final_length = l_car_to_dest + l_car_to_pass
 
-        if len(final_route) * self.discharge_rate < self.ev_info[index]['SOC']:
-            self.user_info[picked_user]['status'] = 'served'
-            self.pre_pickup = pre_pickup
-            self.picked_user = picked_user
-            self.ev_info[index]['status'] = 'serving'
-            self.ev_info[index]['passenger'] = picked_user
-            self.ev_info[index]['timer'] = self.graph.adj[int(target)][int(final_route[0])][0]['state']
-            self.ev_info[index]['route'] = iter(final_route)
+            if len(final_route) * self.discharge_rate < self.ev_info[index]['SOC']:
+                self.user_info[picked_user]['status'] = 'served'
+                self.pre_pickup = pre_pickup
+                self.picked_user = picked_user
+                self.ev_info[index]['status'] = 'serving'
+                self.ev_info[index]['passenger'] = picked_user
+                self.ev_info[index]['timer'] = self.graph.adj[int(target)][int(final_route[0])][0]['state']
+                self.ev_info[index]['route'] = iter(final_route)
             
         check = self.check_if_reward(index, target)
         
@@ -347,12 +367,10 @@ class Env(tk.Tk):
 
     # @profile
     def reset_rewards(self, index):
-        self.rewards.clear()
 
         for k in self.user_info.keys():
             self.user_info[k]['waiting_time'] = 0
         self.aux_counter = self.counter
-        self.wt_rectifier = 0
         if self.ev_info[index]['status'] != 'no_battery':
             self.ev_info[index]['serving'] = False
             self.ev_info[index]['status'] = 'idle'
@@ -361,18 +379,7 @@ class Env(tk.Tk):
         self.taken_nodes = [self.ev_info[index]['NODE_ID']]
 
         for k in self.user_info.keys():
-            source, source_node = self.random_location()
-            self.user_info[k]['source'] = source
-            self.user_info[k]['NODE_ID_source'] = source_node
-            self.user_info[k]['scatter_source'].set_offsets(
-                np.c_[self.user_info[k]['source'][0], self.user_info[k]['source'][1]])
-            destination, dest_node = self.random_location()
-            self.user_info[k]['destination'] = destination
-            self.user_info[k]['NODE_ID_destination'] = dest_node
-            self.user_info[k]['scatter_destination'].set_offsets(
-                np.c_[self.user_info[k]['destination'][0], self.user_info[k]['destination'][1]])
-            self.user_info[k]['waiting_time'] = 0
-            self.user_info[k]['status'] = 'standing'
+            self.update_user_info(k)
 
     def charge(self, index, target):
         if self.cs_info[self.picked_cs]['NODE_ID'] == target['NODE_ID']:
@@ -390,10 +397,10 @@ class Env(tk.Tk):
         rewards = 0
 
         if not self.ev_info[index]['serving']:
-            for k in self.user_info.keys():
-                self.user_info[k]['waiting_time'] = self.counter if self.aux_counter == 0 else self.counter - self.aux_counter
+            for k, v in self.user_info.items():
+                if v['status'] != 'no_call':
+                    self.user_info[k]['waiting_time'] = self.counter if self.aux_counter == 0 else self.counter - self.aux_counter
 
-        # pdb.set_trace()
         if self.ev_info[index]['passenger'] != -1:
             picked_user = self.ev_info[index]['passenger']
 
@@ -423,6 +430,7 @@ class Env(tk.Tk):
             if self.cs_info[self.picked_cs]['waiting_time'] == 0:
                 self.ev_info[index]['charging'] = True
                 charging_time = int(np.ceil((self.max_soc - self.ev_info[index]['SOC'])/self.charge_rate))
+                self.info['ev_ct'].append(charging_time)
                 self.cs_info[self.picked_cs]['waiting_time'] = charging_time * self.duration
 
             if self.ev_info[index]['charging']:
@@ -434,8 +442,6 @@ class Env(tk.Tk):
                 self.ev_info[index]['charging'] = False
                 self.ev_info[index]['status'] = 'idle'
 
-        # pdb.set_trace()
-
         if self.ev_info[index]['SOC'] == self.min_soc and self.ev_info[index]['status'] != 'no_battery':
             self.ev_info[index]['status'] = 'no_battery'
             self.info['active'] = self.counter
@@ -443,20 +449,25 @@ class Env(tk.Tk):
 
         if self.counter == self.max_steps:
             check_list['if_done'] = True
-            
+        
         if check_list['if_goal']:
             self.reset_rewards(index)
-        # elif not self.ev_info[index]['on_duty'] and self.user_info[0]['waiting_time'] >= BETA:
         elif (
             (self.ev_info[index]['status'] == 'idle' or self.ev_info[index]['status'] == 'no_battery') and 
-            self.user_info[0]['waiting_time'] >= self.beta):
-            rewards -= self.user_info[0]['waiting_time']
-            self.info['waiting_time'].append(self.user_info[0]['waiting_time'] * self.duration)
+            any(v['waiting_time'] >= self.beta for v in self.user_info.values())):
+            for k, v in self.user_info.items():
+                if v['waiting_time'] >= 0:
+                    idx = k
+                    break
+            rewards -= self.user_info[idx]['waiting_time']
+            self.info['waiting_time'].append(self.user_info[idx]['waiting_time'] * self.duration)
             self.reset_rewards(index)
+        elif (all(v['status'] == 'no_call' for v in self.user_info.values())):
+            if np.random.random() < self.occurrence_rate:
+                self.reset_rewards(index)
 
         check_list['rewards'] = rewards
 
-        # pdb.set_trace()
         return check_list
 
     # @profile
@@ -470,7 +481,6 @@ class Env(tk.Tk):
         self.ev_info[index]['scatter'].set_offsets(
             np.c_[self.ev_info[index]['location'][0], self.ev_info[index]['location'][1]])
         self.discharge_ev(index)
-        # pdb.set_trace()
         return self.check_if_reward(index, next_node)
 
     # @profile
@@ -497,15 +507,13 @@ class Env(tk.Tk):
             self.info['count'] = self.counter
             self.info['to_charge'] = self.charging_counter
             self.info['total_calls'] = len(self.info['waiting_time'])
-            self.info['response_rate'] = self.user_counter/len(self.info['waiting_time'])
+            self.info['response_rate'] = self.user_counter/len(self.info['waiting_time']) if len(self.info['waiting_time']) > 0 else 0
             if 'active' not in self.info.keys():
                 self.info['active'] = self.counter
 
         reward = check['rewards']
 
         s_ = self.get_state()
-
-        # pdb.set_trace()
 
         return s_, reward, done, self.info
 
@@ -529,6 +537,7 @@ class Env(tk.Tk):
         self.info['waiting_time'] = []
         self.info['ev_wt'] = []
         self.info['cs'] = {}
+        self.info['ev_ct'] = []
         for k in self.ev_info.keys():
             self.ev_info[k]['SOC'] = self.max_soc
             self.ev_info[k]['timer'] = 0
@@ -546,7 +555,6 @@ class Env(tk.Tk):
     def render(self):
         if self.normal_render:
             time.sleep(0.1)
-            pass
         self.update()
         self.canvas.draw()
 
@@ -568,7 +576,8 @@ class GymEnv(gym.Env):
             time_step_duration = 1,
             alpha = 15,
             beta = 20,              
-            soc_threshold = 0.15,  
+            soc_threshold = 0.15,
+            occurrence_rate = 0.5  
         ):
         super().__init__()
         self.game = Env(
@@ -587,7 +596,8 @@ class GymEnv(gym.Env):
             time_step_duration = time_step_duration,
             alpha = alpha,
             beta = beta,
-            soc_threshold = soc_threshold,  
+            soc_threshold = soc_threshold,
+            occurrence_rate= occurrence_rate
         )
         self.observation_space = self.game.observation_space
         self.action_space = spaces.Discrete(self.game.action_size)
