@@ -6,7 +6,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import networkx as nx
 import tkinter as tk
+import geopandas as gpd
 
+from shapely.geometry import box
 from utils import create_map, label_speed, graph_from_gdfs
 from gym import spaces
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -45,6 +47,7 @@ class Env(tk.Tk):
         self.max_soc = max_soc 
         self.charge_time = charge_time
         self.duration = time_step_duration
+        self.min = minutes_per_hour
         self.max_steps = (hours_per_day * minutes_per_hour) / self.duration
         self.charge_rate = self.max_soc / self.charge_time
         self.discharge_rate = discharge_rate
@@ -59,6 +62,8 @@ class Env(tk.Tk):
         self.roads = gdf_edges
         self.aux_road_result = result.drop(columns=result.geometry.name)
         self.speed = s_df
+
+        self.divide_map()
 
         self.max_neighbours = int((max(sorted((d for _, d in G.degree()), reverse= True)))/2)
         self.n_cs = len(self.cs)
@@ -75,6 +80,7 @@ class Env(tk.Tk):
         )
 
         self.cs_nodes = self.cs['NODE_ID'].values
+        self.intersection_nodes = self.intersections.index.values
         self.mask_101 = (self.aux_road_result['ROAD_RANK'] == '101').values
         self.mask_103 = ((self.aux_road_result['ROAD_RANK'] == '103') | (self.aux_road_result['ROAD_RANK'] == '106')).values
         self.mask_107 = (self.aux_road_result['ROAD_RANK'] == '107').values
@@ -115,6 +121,23 @@ class Env(tk.Tk):
     def color_roads(self):
         return [self.color_mapper[v] for v in self.roads['TC'].values]
 
+    def divide_map(self):
+        minx, miny, maxx, maxy = self.roads.total_bounds
+        self.city_boundaries = [minx, miny, maxx, maxy]
+        self.boundary_1 = [minx, miny, minx + (maxx-minx)/2, miny + (maxy-miny)/2]
+        self.boundary_2 = [minx + (maxx-minx)/2, miny + (maxy-miny)/2, maxx, maxy]
+        self.boundary_3 = [minx, miny + (maxy-miny)/2, minx + (maxx-minx)/2, maxy]
+        self.boundary_4 = [minx + (maxx-minx)/2, miny, maxx, miny + (maxy-miny)/2]
+        self.city_box = {
+            0: box(self.boundary_1[0], self.boundary_1[1], self.boundary_1[2], self.boundary_1[3]),
+            1: box(self.boundary_2[0], self.boundary_2[1], self.boundary_2[2], self.boundary_2[3]),
+            2: box(self.boundary_3[0], self.boundary_3[1], self.boundary_3[2], self.boundary_3[3]),
+            3: box(self.boundary_4[0], self.boundary_4[1], self.boundary_4[2], self.boundary_4[3])
+        }
+        self.city_section = {}
+        for i in self.city_box.keys():
+            self.city_section[i] = gpd.clip(self.intersections, mask=self.city_box[i]).index.values
+
     def create_plot(self):
         self.fig, self.ax = plt.subplots(figsize=(10,7))
         self.ax.get_xaxis().set_visible(False)
@@ -144,12 +167,24 @@ class Env(tk.Tk):
             elif cs_state <= 0:
                 self.cs_info[k]['waiting_time'] = random.randrange(self.min_threshold, self.charge_time, self.duration)
 
-    def random_location(self):
-        picked_node = random.choice(self.intersections.index.values)
+    def random_location(self, target):
+        nodes = self.intersection_nodes
+        if target == 'source':
+            if self.counter > self.min * 5 and self.counter < self.min * 11:
+                nodes = [*self.city_section[0], *self.city_section[2]]
+            elif self.counter > self.min * 16 and self.counter < self.min * 22:
+                nodes = [*self.city_section[1], *self.city_section[3]]
+            if self.counter > self.min * 5 and self.counter < self.min * 11:
+                nodes = [*self.city_section[1], *self.city_section[3]]
+            elif self.counter > self.min * 16 and self.counter < self.min * 22:
+                nodes = [*self.city_section[0], *self.city_section[2]]
+        
+        picked_node = random.choice(nodes)
         while (picked_node in self.cs_nodes) or (picked_node in self.taken_nodes):
-            picked_node = random.choice(self.intersections.index.values)
+            picked_node = random.choice(nodes)
         loc = [self.intersections.at[picked_node, 'x'], self.intersections.at[picked_node, 'y']]
         self.taken_nodes.append(picked_node)
+            
         return loc, picked_node
 
     def _build_canvas(self):
@@ -160,7 +195,7 @@ class Env(tk.Tk):
         self.taken_nodes = []
         for i in range(self.n_ev):
             self.ev_info[i] = {}
-            location, node = self.random_location()
+            location, node = self.random_location('ev')
             self.ev_info[i]['location'] = location
             self.ev_info[i]['NODE_ID'] = node
             self.ev_info[i]['SOC'] = self.max_soc
@@ -179,8 +214,8 @@ class Env(tk.Tk):
         if np.random.random() < self.occurrence_rate:
             self.user_info[i]['status'] = 'standing'
             self.user_info[i]['waiting_time'] = 0
-            source, source_node = self.random_location()
-            destination, dest_node = self.random_location()
+            source, source_node = self.random_location('source')
+            destination, dest_node = self.random_location('destination')
         else:
             self.user_info[i]['status'] = 'no_call'
             self.user_info[i]['waiting_time'] = -1
@@ -198,8 +233,8 @@ class Env(tk.Tk):
         if np.random.random() < self.occurrence_rate:
             self.user_info[k]['status'] = 'standing'
             self.user_info[k]['waiting_time'] = 0
-            source, source_node = self.random_location()
-            destination, dest_node = self.random_location()
+            source, source_node = self.random_location('source')
+            destination, dest_node = self.random_location('destination')
         else:
             self.user_info[k]['status'] = 'no_call'
             self.user_info[k]['waiting_time'] = -1
@@ -461,9 +496,14 @@ class Env(tk.Tk):
                     break
             rewards -= self.user_info[idx]['waiting_time']
             self.info['waiting_time'].append(self.user_info[idx]['waiting_time'] * self.duration)
+            # print('no_patience')
+            # if np.random.random() < self.occurrence_rate:
+                # print('after_no_patience')
             self.reset_rewards(index)
         elif (all(v['status'] == 'no_call' for v in self.user_info.values())):
+            # print('no_call')
             if np.random.random() < self.occurrence_rate:
+                # print('after_no_call')
                 self.reset_rewards(index)
 
         check_list['rewards'] = rewards
