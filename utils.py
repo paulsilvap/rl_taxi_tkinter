@@ -70,7 +70,8 @@ def create_map(days=1):
     # bbox=(208700, 358000, 215300, 362650)
     bbox=(205000, 358000, 217500, 365500)
     # limits = [127.05693, 35.81962, 127.19335, 35.88782]
-    limits = [127.09, 35.83, 127.15, 35.86]
+    # limits = [127.09, 35.83, 127.15, 35.86]
+    limits = [127.0923101112356, 35.83, 127.1210430644239, 35.84495946836995]
     new_bbox = box(limits[0], limits[1], limits[2], limits[3])
     # gdf_box = gpd.GeoDataFrame({'geometry': gpd.GeoSeries([new_bbox])}).set_crs('EPSG:4326')
 
