@@ -16,6 +16,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 np.random.seed(100)
 
 class Env(tk.Tk):
+    # @profile
     def __init__(
         self, 
         normal_render = False, 
@@ -91,9 +92,11 @@ class Env(tk.Tk):
         self.traffic_time = iter(list(self.traffic.groups.keys()))
         self.daily_graph = {}
         self.daily_roads = {}
+        self.daily_traffic_state = {}
         for d in range(1, self.max_days+1):
             self.daily_graph[d] = {}
             self.daily_roads[d] = {}
+            self.daily_traffic_state[d] = {}
 
         self.counter = 0
         self.aux_counter = 0
@@ -123,9 +126,11 @@ class Env(tk.Tk):
         self.set_users()
         self.canvas.get_tk_widget().pack(side='top',fill='both', expand=True)
 
+    # @profile
     def color_roads(self):
         return [self.color_mapper[v] for v in self.roads['TC'].values]
 
+    # @profile
     def divide_map(self):
         minx, miny, maxx, maxy = self.roads.total_bounds
         self.city_boundaries = [minx, miny, maxx, maxy]
@@ -143,6 +148,7 @@ class Env(tk.Tk):
         for i in self.city_box.keys():
             self.city_section[i] = gpd.clip(self.intersections, mask=self.city_box[i]).index.values
 
+    # @profile
     def create_plot(self):
         self.fig, self.ax = plt.subplots(figsize=(10,7))
         self.ax.get_xaxis().set_visible(False)
@@ -151,11 +157,11 @@ class Env(tk.Tk):
         self.roads = self.roads.drop(columns=self.roads.geometry.name)
         # self.ax.scatter(self.intersections['geometry'].x, self.intersections['geometry'].y, s = 2, zorder=-1, color='k')
         self.intersections = self.intersections.drop(columns=self.intersections.geometry.name)
-        # self.ax.set(xlim = (127.05693, 127.19335), ylim = (35.81962, 35.88782))
         self.ax.set(xlim = (self.city_boundaries[0], self.city_boundaries[2]), ylim = (self.city_boundaries[1], self.city_boundaries[3]))
         self.fig.tight_layout()
         self.ax.scatter(self.cs['geometry'].x, self.cs['geometry'].y, color='xkcd:brown')
 
+    # @profile
     def set_cs(self):
         self.cs_info = self.cs.T.to_dict()
 
@@ -164,6 +170,7 @@ class Env(tk.Tk):
             self.cs_info[k]['ev_id'] = []
             self.info['cs'][k] = 0
 
+    # @profile
     def update_cs(self):
         for k,v in self.cs_info.items():
             cs_state = v['waiting_time']
@@ -172,6 +179,7 @@ class Env(tk.Tk):
             elif cs_state <= 0:
                 self.cs_info[k]['waiting_time'] = random.randrange(self.min_threshold, self.charge_time, self.duration)
 
+    # @profile
     def random_location(self, target):
         nodes = self.intersection_nodes
         if target == 'source':
@@ -188,11 +196,11 @@ class Env(tk.Tk):
         picked_node = random.choice(nodes)
         while (picked_node in self.cs_nodes) or (picked_node in self.taken_nodes):
             picked_node = random.choice(nodes)
-        loc = [self.intersections.at[picked_node, 'x'], self.intersections.at[picked_node, 'y']]
         self.taken_nodes.add(picked_node)
             
-        return loc, picked_node
-
+        return picked_node
+    
+    # @profile
     def _build_canvas(self):
         # self.attributes('-fullscreen', True)
         canvas = FigureCanvasTkAgg(self.fig, self)
@@ -201,7 +209,8 @@ class Env(tk.Tk):
         self.taken_nodes = set()
         for i in range(self.n_ev):
             self.ev_info[i] = {}
-            location, node = self.random_location('ev')
+            node = self.random_location('ev')
+            location = [self.intersections.at[node, 'x'], self.intersections.at[node, 'y']]
             self.ev_info[i]['NODE_ID'] = node
             self.ev_info[i]['SOC'] = self.max_soc
             self.ev_info[i]['status'] = 'idle'
@@ -217,13 +226,16 @@ class Env(tk.Tk):
         
         return canvas
 
+    # @profile
     def set_user_info(self, i):
         if np.random.random() < self.occurrence_rate:
             self.user_info[i]['status'] = 'standing'
             self.user_info[i]['waiting_time'] = 0
             self.user_info[i]['counter'] = 0
-            source, source_node = self.random_location('source')
-            destination, dest_node = self.random_location('destination')
+            source_node = self.random_location('source')
+            dest_node = self.random_location('destination')
+            source = [self.intersections.at[source_node, 'x'],self.intersections.at[source_node, 'y']]
+            destination = [self.intersections.at[dest_node, 'x'],self.intersections.at[dest_node, 'y']]
         else:
             self.user_info[i]['status'] = 'no_call'
             self.user_info[i]['waiting_time'] = -1
@@ -231,34 +243,42 @@ class Env(tk.Tk):
             source, source_node = [np.nan, np.nan], -1
             destination, dest_node = [np.nan, np.nan], -1
         
+        
         self.user_info[i]['NODE_ID_source'] = source_node
         self.user_info[i]['scatter_source'] = self.ax.scatter(source[0], source[1], color='m', marker='H')
         self.user_info[i]['NODE_ID_destination'] = dest_node
         self.user_info[i]['scatter_destination'] = self.ax.scatter(destination[0], destination[1], color='m', marker='X')
         self.user_info[i]['picked_up'] = False
-            
+    
+    # @profile
     def update_user_info(self, i):
         if i not in self.pass_set:
             if np.random.random() < self.occurrence_rate:
+                self.total_request_counter += 1
                 self.user_info[i]['status'] = 'standing'
                 self.user_info[i]['waiting_time'] = 0
                 self.user_info[i]['counter'] = self.counter
-                source, source_node = self.random_location('source')
-                destination, dest_node = self.random_location('destination')
-                self.total_request_counter += 1
+                source_node = self.random_location('source')
+                dest_node = self.random_location('destination')
+                if self.show:
+                    source = [self.intersections.at[source_node, 'x'],self.intersections.at[source_node, 'y']]
+                    destination = [self.intersections.at[dest_node, 'x'],self.intersections.at[dest_node, 'y']]                
             else:
                 self.user_info[i]['status'] = 'no_call'
                 self.user_info[i]['waiting_time'] = -1
                 self.user_info[i]['counter'] = -1
-                source, source_node = [np.nan, np.nan], -1
-                destination, dest_node = [np.nan, np.nan], -1
+                dest_node = source_node = -1
+                if self.show:
+                    destination = source = [np.nan, np.nan]
 
             self.user_info[i]['NODE_ID_source'] = source_node
-            self.user_info[i]['scatter_source'].set_offsets(np.c_[source[0], source[1]])
             self.user_info[i]['NODE_ID_destination'] = dest_node
-            self.user_info[i]['scatter_destination'].set_offsets(np.c_[destination[0], destination[1]])
+            if self.show:
+                self.user_info[i]['scatter_source'].set_offsets(np.c_[source[0], source[1]])
+                self.user_info[i]['scatter_destination'].set_offsets(np.c_[destination[0], destination[1]])
             self.user_info[i]['picked_up'] = False
-            
+
+    # @profile
     def set_users(self):
         self.user_info = {}
         
@@ -266,6 +286,7 @@ class Env(tk.Tk):
             self.user_info[i] = {}
             self.set_user_info(i)
 
+    # @profile
     def update_users(self):
         self.taken_nodes.clear()
         for v in self.ev_info.values():
@@ -307,6 +328,7 @@ class Env(tk.Tk):
                     print(f'{self.cs_info=}\n')
             self.traffic_counter += 1
 
+    # @profile
     def discharge_ev(self, index):
         self.ev_info[index]['SOC'] = (int(self.ev_info[index]['SOC']*10) - int((self.discharge_rate)*10))/10
 
@@ -316,9 +338,10 @@ class Env(tk.Tk):
         sample = self.graph.neighbors(s)
         s_ = next((x for i,x in enumerate(sample) if i==action), None)
         if s_ is not None:
-            loc = [self.intersections.at[s_, 'x'], self.intersections.at[s_, 'y']]
             self.ev_info[index]['NODE_ID'] = s_
-            self.ev_info[index]['scatter'].set_offsets(np.c_[loc[0], loc[1]])
+            if self.show:
+                loc = [self.intersections.at[s_, 'x'], self.intersections.at[s_, 'y']]
+                self.ev_info[index]['scatter'].set_offsets(np.c_[loc[0], loc[1]])
             self.discharge_ev(index)
         else:
             s_ = s
@@ -332,6 +355,7 @@ class Env(tk.Tk):
 
         return check
 
+    # @profile
     def charge_allocator(self, index, target):
         aux_cs = {}
         for k, v in self.cs_info.items():
@@ -405,15 +429,21 @@ class Env(tk.Tk):
             
         return self.check_if_reward(index, target)
 
+    # @profile
     def get_state(self):
         ev = [[v['SOC'],float(v['NODE_ID'])] for v in self.ev_info.values()]
         ev = [d for data in ev for d in data]
         user = [[float(v['NODE_ID_source']), float(v['NODE_ID_destination']), v['waiting_time']] for v in self.user_info.values()]
         user = [d for data in user for d in data]
         cs = [v['waiting_time'] for v in self.cs_info.values()]
-        traffic = [data['state'] for _, _, data in self.graph.edges(data=True)]
+        if self.counter in self.daily_traffic_state[self.day].keys():
+            traffic = self.daily_traffic_state[self.day][self.counter]
+        else:
+            traffic = [data['state'] for _, _, data in self.graph.edges(data=True)]
+            self.daily_traffic_state[self.day][self.counter] = traffic
         return np.array([*ev, *user, *cs, *traffic], dtype=np.float32)
 
+    # @profile
     def charge(self, index, target):
         if self.cs_info[self.ev_info[index]['cs']]['NODE_ID'] == target['NODE_ID']:
             check = self.check_if_reward(index, target['NODE_ID'])
@@ -510,9 +540,10 @@ class Env(tk.Tk):
 
     # @profile
     def move_aux(self, index, next_node):
-        loc = [self.intersections.at[next_node, 'x'], self.intersections.at[next_node, 'y']]
         self.ev_info[index]['NODE_ID'] = next_node
-        self.ev_info[index]['scatter'].set_offsets(np.c_[loc[0], loc[1]])
+        if self.show:
+            loc = [self.intersections.at[next_node, 'x'], self.intersections.at[next_node, 'y']]
+            self.ev_info[index]['scatter'].set_offsets(np.c_[loc[0], loc[1]])
         self.discharge_ev(index)
         return self.check_if_reward(index, next_node)
 
@@ -560,6 +591,7 @@ class Env(tk.Tk):
 
         return s_, reward, done, self.info
 
+    # @profile
     def reset(self):
         if self.show:
             self.render()
@@ -570,7 +602,7 @@ class Env(tk.Tk):
             self.day = 1
 
         self.traffic = self.speed[self.day].groupby('ts')
-        self.traffic_time = iter(list(self.traffic.groups.keys()))
+        self.traffic_time = iter(self.traffic.groups.keys())
 
         self.counter = 0
         self.traffic_counter = 0
