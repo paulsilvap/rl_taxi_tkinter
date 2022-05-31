@@ -93,14 +93,23 @@ class Env(tk.Tk):
         self.daily_graph = {}
         self.daily_roads = {}
         self.daily_traffic_state = {}
+        self.daily_passenger_calls = {}
+        self.daily_cs_waiting_time = {}
         for d in range(1, self.max_days+1):
             self.daily_graph[d] = {}
             self.daily_roads[d] = {}
             self.daily_traffic_state[d] = {}
+            self.daily_passenger_calls[d] = {}
+            self.daily_cs_waiting_time[d] = {}
+            for i in range(self.n_passenger):
+                self.daily_passenger_calls[d][i] = {}
+            for i in range(self.n_cs):
+                self.daily_cs_waiting_time[d][i] = {}
 
         self.counter = 0
         self.aux_counter = 0
         self.traffic_counter = 0
+        self.no_pass_counter = 0
         self.user_counter = 0
         self.total_request_counter = 0
         self.waiting_time = 0
@@ -166,7 +175,7 @@ class Env(tk.Tk):
         self.cs_info = self.cs.T.to_dict()
 
         for k in self.cs_info.keys():
-            self.cs_info[k]['waiting_time'] = (random.randrange(self.min_threshold, self.charge_time, self.duration))
+            self.cs_info[k]['waiting_time'] = random.randrange(self.min_threshold, self.charge_time, self.duration)
             self.cs_info[k]['ev_id'] = []
             self.info['cs'][k] = 0
 
@@ -177,7 +186,11 @@ class Env(tk.Tk):
             if cs_state > 0:
                 self.cs_info[k]['waiting_time'] = cs_state - self.duration
             elif cs_state <= 0:
-                self.cs_info[k]['waiting_time'] = random.randrange(self.min_threshold, self.charge_time, self.duration)
+                if self.counter in self.daily_cs_waiting_time[self.day][k].keys():
+                    self.cs_info[k]['waiting_time'] = self.daily_cs_waiting_time[self.day][k][self.counter]
+                else:    
+                    self.cs_info[k]['waiting_time'] = random.randrange(self.min_threshold, self.charge_time, self.duration)
+                    self.daily_cs_waiting_time[self.day][k][self.counter] = self.cs_info[k]['waiting_time']
 
     # @profile
     def random_location(self, target):
@@ -218,6 +231,7 @@ class Env(tk.Tk):
             self.ev_info[i]['passenger'] = -1
             self.ev_info[i]['cs'] = -1
             self.ev_info[i]['driving_to_pass'] = -1
+            self.ev_info[i]['driving_to_cs'] = -1
             self.ev_info[i]['route'] = None
             self.ev_info[i]['timer'] = 0
             self.ev_info[i]['charging'] = False
@@ -258,8 +272,14 @@ class Env(tk.Tk):
                 self.user_info[i]['status'] = 'standing'
                 self.user_info[i]['waiting_time'] = 0
                 self.user_info[i]['counter'] = self.counter
-                source_node = self.random_location('source')
-                dest_node = self.random_location('destination')
+                if self.counter in self.daily_passenger_calls[self.day][i].keys():
+                    source_node, dest_node = self.daily_passenger_calls[self.day][i][self.counter]
+                    self.taken_nodes.add(source_node)
+                    self.taken_nodes.add(dest_node)
+                else:
+                    source_node = self.random_location('source')
+                    dest_node = self.random_location('destination')
+                    self.daily_passenger_calls[self.day][i][self.counter] = [source_node, dest_node]
                 if self.show:
                     source = [self.intersections.at[source_node, 'x'],self.intersections.at[source_node, 'y']]
                     destination = [self.intersections.at[dest_node, 'x'],self.intersections.at[dest_node, 'y']]                
@@ -366,6 +386,7 @@ class Env(tk.Tk):
         self.ev_info[index]['status'] = 'charging'
         self.ev_info[index]['cs'] = picked_cs
         l_car_to_cs = aux_cs[picked_cs]
+        self.ev_info[index]['driving_to_cs'] = l_car_to_cs
         self.info['driving_to_cs'].append(l_car_to_cs)
         r_car_to_cs = nx.dijkstra_path(self.graph, target, self.cs_info[picked_cs]['NODE_ID'], weight='state')
         if len(r_car_to_cs) > 1:
@@ -479,8 +500,8 @@ class Env(tk.Tk):
                 self.ev_info[index]['serving'] = False
                 self.ev_info[index]['status'] = 'idle'
                 self.pass_set.remove(picked_user)
-                self.taken_nodes.remove(self.user_info[picked_user]['NODE_ID_source'])
-                self.taken_nodes.remove(self.user_info[picked_user]['NODE_ID_destination'])
+                self.taken_nodes.discard(self.user_info[picked_user]['NODE_ID_source'])
+                self.taken_nodes.discard(self.user_info[picked_user]['NODE_ID_destination'])
                 self.update_user_info(picked_user)
                 self.ev_info[index]['passenger'] = -1
 
@@ -488,6 +509,11 @@ class Env(tk.Tk):
             picked_cs = self.ev_info[index]['cs']
 
             if (self.ev_info[index]['status'] == 'charging' and self.cs_info[picked_cs]['NODE_ID'] == next_node):
+                
+                if self.ev_info[index]['driving_to_cs'] != -1:
+                    driving_to_cs = self.ev_info[index]['driving_to_cs']
+                    rewards += self.alpha if driving_to_cs == 0 else (self.alpha / driving_to_cs)
+                    self.ev_info[index]['driving_to_cs'] = -1
 
                 if (not self.ev_info[index]['waiting'] and not self.ev_info[index]['charging']):
                     self.info['ev_wt'].append(self.cs_info[picked_cs]['waiting_time'])
@@ -525,13 +551,14 @@ class Env(tk.Tk):
 
         for k, v in self.user_info.items():
             if v['waiting_time'] >= self.beta and k not in self.pass_set:
-                self.taken_nodes.remove(v['NODE_ID_source'])
-                self.taken_nodes.remove(v['NODE_ID_destination'])
+                self.taken_nodes.discard(v['NODE_ID_source'])
+                self.taken_nodes.discard(v['NODE_ID_destination'])
                 rewards -= v['waiting_time']
                 self.info['waiting_time'].append(v['waiting_time'] * self.duration)
                 self.update_user_info(k)
 
         if (all(v['status'] == 'no_call' for v in self.user_info.values())):
+            self.no_pass_counter += 1
             self.update_users()
 
         check_list['rewards'] = rewards
@@ -583,6 +610,7 @@ class Env(tk.Tk):
             self.info['avg_ev_ct'] = np.mean(self.info['ev_ct'])
             self.info['avg_ev_wt'] = np.mean(self.info['ev_wt'])
             self.info['total_requests'] = self.total_request_counter
+            self.info['no_pass'] = self.no_pass_counter/self.counter
             self.info['response_rate'] = self.user_counter/len(self.info['waiting_time']) if len(self.info['waiting_time']) > 0 else 0
 
         reward = sum([v['rewards'] for v in check.values()]) 
@@ -607,6 +635,7 @@ class Env(tk.Tk):
         self.counter = 0
         self.traffic_counter = 0
         self.user_counter = 0
+        self.no_pass_counter = 0
         self.total_request_counter = 0
         self.charging_counter = 0
         self.info.clear()
@@ -622,14 +651,23 @@ class Env(tk.Tk):
         for k in self.ev_info.keys():
             self.ev_info[k]['SOC'] = self.max_soc
             self.ev_info[k]['timer'] = 0
+            self.ev_info[i]['passenger'] = -1
+            self.ev_info[i]['cs'] = -1
+            self.ev_info[i]['driving_to_pass'] = -1
+            self.ev_info[i]['driving_to_cs'] = -1
             self.ev_info[k]['route'] = None
             self.ev_info[k]['charging'] = False
+            self.ev_info[i]['serving'] = False
             self.ev_info[k]['waiting'] = False
             self.ev_info[k]['status'] = 'idle'
             self.taken_nodes.add(self.ev_info[k]['NODE_ID'])
 
         for k in self.cs_info.keys():
-            self.cs_info[k]['waiting_time'] = (random.randrange(self.min_threshold, self.charge_time, self.duration))
+            if self.counter in self.daily_cs_waiting_time[self.day][k].keys():
+                self.cs_info[k]['waiting_time'] = self.daily_cs_waiting_time[self.day][k][self.counter]
+            else:    
+                self.cs_info[k]['waiting_time'] = random.randrange(self.min_threshold, self.charge_time, self.duration)
+                self.daily_cs_waiting_time[self.day][k][self.counter] = self.cs_info[k]['waiting_time']
             self.info['cs'][k] = 0
 
         for k in self.user_info.keys():
