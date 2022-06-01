@@ -111,6 +111,7 @@ class Env(tk.Tk):
         self.traffic_counter = 0
         self.no_pass_counter = 0
         self.user_counter = 0
+        self.user_dropped_counter = 0
         self.total_request_counter = 0
         self.waiting_time = 0
         self.cs_waiting_time = 0
@@ -268,6 +269,8 @@ class Env(tk.Tk):
     def update_user_info(self, i):
         if i not in self.pass_set:
             if np.random.random() < self.occurrence_rate:
+                self.taken_nodes.discard(self.user_info[i]['NODE_ID_source'])
+                self.taken_nodes.discard(self.user_info[i]['NODE_ID_destination'])
                 self.total_request_counter += 1
                 self.user_info[i]['status'] = 'standing'
                 self.user_info[i]['waiting_time'] = 0
@@ -492,18 +495,16 @@ class Env(tk.Tk):
             
             if (self.ev_info[index]['serving'] and self.user_info[picked_user]['NODE_ID_destination'] == next_node):
 
-                self.user_info[picked_user]['status'] = 'standing'
                 self.user_counter += 1
                 driving_to_pass = self.ev_info[index]['driving_to_pass']
                 rewards += self.alpha if driving_to_pass == 0 else (self.alpha / driving_to_pass)
                 self.ev_info[index]['driving_to_pass'] = -1
                 self.ev_info[index]['serving'] = False
                 self.ev_info[index]['status'] = 'idle'
-                self.pass_set.remove(picked_user)
-                self.taken_nodes.discard(self.user_info[picked_user]['NODE_ID_source'])
-                self.taken_nodes.discard(self.user_info[picked_user]['NODE_ID_destination'])
-                self.update_user_info(picked_user)
                 self.ev_info[index]['passenger'] = -1
+                self.pass_set.remove(picked_user)
+                self.update_user_info(picked_user)
+                
 
         if self.ev_info[index]['cs'] != -1:
             picked_cs = self.ev_info[index]['cs']
@@ -549,12 +550,20 @@ class Env(tk.Tk):
             if index not in self.info['active'].keys():
                 self.info['active'][index] = self.counter 
 
-        for k, v in self.user_info.items():
-            if v['waiting_time'] >= self.beta and k not in self.pass_set:
-                self.taken_nodes.discard(v['NODE_ID_source'])
-                self.taken_nodes.discard(v['NODE_ID_destination'])
-                rewards -= v['waiting_time']
+        ''' Check that no passenger has been waiting for more than beta.
+        If this is the case, replace those passenger requests and give a negative reward to only 
+        the ones that were assigned by the allocator to an E-Taxi '''
+        for k, v in self.user_info.items():    
+            if v['waiting_time'] >= self.beta:
                 self.info['waiting_time'].append(v['waiting_time'] * self.duration)
+                if k in self.pass_set:
+                    rewards -= v['waiting_time']
+                    self.ev_info[index]['driving_to_pass'] = -1
+                    self.ev_info[index]['serving'] = False
+                    self.ev_info[index]['status'] = 'idle'
+                    self.ev_info[index]['passenger'] = -1
+                    self.pass_set.remove(picked_user)
+                    self.user_dropped_counter += 1
                 self.update_user_info(k)
 
         if (all(v['status'] == 'no_call' for v in self.user_info.values())):
@@ -602,8 +611,10 @@ class Env(tk.Tk):
 
         if done:
             self.info['served_users'] = self.user_counter
+            self.info['non_served_users'] = self.user_dropped_counter
             self.info['count'] = self.counter
             self.info['to_charge'] = self.charging_counter
+            self.info['rejection_rate'] = self.user_dropped_counter/self.total_request_counter
             self.info['total_calls'] = len(self.info['waiting_time'])
             self.info['avg_driving_to_pass'] = np.mean(self.info['driving_to_pass'])
             self.info['avg_driving_to_cs'] = np.mean(self.info['driving_to_cs'])
@@ -611,7 +622,7 @@ class Env(tk.Tk):
             self.info['avg_ev_wt'] = np.mean(self.info['ev_wt'])
             self.info['total_requests'] = self.total_request_counter
             self.info['no_pass'] = self.no_pass_counter/self.counter
-            self.info['response_rate'] = self.user_counter/len(self.info['waiting_time']) if len(self.info['waiting_time']) > 0 else 0
+            self.info['response_rate'] = self.user_counter/self.total_request_counter if self.total_request_counter > 0 else 0
 
         reward = sum([v['rewards'] for v in check.values()]) 
 
@@ -638,6 +649,7 @@ class Env(tk.Tk):
         self.no_pass_counter = 0
         self.total_request_counter = 0
         self.charging_counter = 0
+        self.user_dropped_counter = 0
         self.info.clear()
         self.pass_set.clear()
         self.taken_nodes.clear()
@@ -651,13 +663,13 @@ class Env(tk.Tk):
         for k in self.ev_info.keys():
             self.ev_info[k]['SOC'] = self.max_soc
             self.ev_info[k]['timer'] = 0
-            self.ev_info[i]['passenger'] = -1
-            self.ev_info[i]['cs'] = -1
-            self.ev_info[i]['driving_to_pass'] = -1
-            self.ev_info[i]['driving_to_cs'] = -1
+            self.ev_info[k]['passenger'] = -1
+            self.ev_info[k]['cs'] = -1
+            self.ev_info[k]['driving_to_pass'] = -1
+            self.ev_info[k]['driving_to_cs'] = -1
             self.ev_info[k]['route'] = None
             self.ev_info[k]['charging'] = False
-            self.ev_info[i]['serving'] = False
+            self.ev_info[k]['serving'] = False
             self.ev_info[k]['waiting'] = False
             self.ev_info[k]['status'] = 'idle'
             self.taken_nodes.add(self.ev_info[k]['NODE_ID'])
