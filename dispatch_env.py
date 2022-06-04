@@ -89,7 +89,7 @@ class Env(tk.Tk):
         self.day = 1
         self.max_days = days
         self.traffic = s_df[self.day].groupby('ts')
-        self.traffic_time = iter(list(self.traffic.groups.keys()))
+        self.traffic_time = iter(self.traffic.groups.keys())
         self.daily_graph = {}
         self.daily_roads = {}
         self.daily_traffic_state = {}
@@ -106,25 +106,10 @@ class Env(tk.Tk):
             for i in range(self.n_cs):
                 self.daily_cs_waiting_time[d][i] = {}
 
-        self.counter = 0
-        self.aux_counter = 0
-        self.traffic_counter = 0
-        self.no_pass_counter = 0
-        self.user_counter = 0
-        self.user_dropped_counter = 0
-        self.total_request_counter = 0
-        self.waiting_time = 0
-        self.cs_waiting_time = 0
-        self.charging_counter = 0
         self.info = {}
         self.pass_set = set()
-        self.info['waiting_time'] = []
-        self.info['ev_wt'] = []
-        self.info['ev_ct'] = []
-        self.info['driving_to_cs'] = []
-        self.info['driving_to_pass'] = []
-        self.info['cs'] = {}
-        self.info['active'] = {}
+        
+        self.base_variables()
 
         self.title('Jeonju')
         self.create_plot()
@@ -157,6 +142,42 @@ class Env(tk.Tk):
         self.city_section = {}
         for i in self.city_box.keys():
             self.city_section[i] = gpd.clip(self.intersections, mask=self.city_box[i]).index.values
+
+    def base_variables(self):
+        self.counter = 0
+
+        self.user_counter = 0
+        self.user_dropped_counter = 0
+        self.no_pass_counter = 0
+        self.total_request_counter = 0
+        
+        self.traffic_counter = 0
+        self.charging_counter = 0
+
+        self.info['waiting_time'] = []
+        self.info['ev_wt'] = []
+        self.info['ev_ct'] = []
+        self.info['driving_to_cs'] = []
+        self.info['driving_to_pass'] = []
+        self.info['cs'] = {}
+        self.info['active'] = {}
+        self.info['ev_total_trip'] = {}
+        self.info['ev_where_at_user'] = {}
+
+    def base_variables_ev(self, i):
+        self.ev_info[i]['SOC'] = self.max_soc
+        self.ev_info[i]['status'] = 'idle'
+        self.ev_info[i]['passenger'] = -1
+        self.ev_info[i]['cs'] = -1
+        self.ev_info[i]['driving_to_pass'] = -1
+        self.ev_info[i]['driving_to_cs'] = -1
+        self.ev_info[i]['route'] = None
+        self.ev_info[i]['timer'] = 0
+        self.ev_info[i]['charging'] = False
+        self.ev_info[i]['serving'] = False
+        self.ev_info[i]['waiting'] = False
+        # self.ev_info[i]['total_trip'] = []
+        self.ev_info[i]['where_at_user'] = []
 
     # @profile
     def create_plot(self):
@@ -226,18 +247,8 @@ class Env(tk.Tk):
             node = self.random_location('ev')
             location = [self.intersections.at[node, 'x'], self.intersections.at[node, 'y']]
             self.ev_info[i]['NODE_ID'] = node
-            self.ev_info[i]['SOC'] = self.max_soc
-            self.ev_info[i]['status'] = 'idle'
             self.ev_info[i]['scatter'] = self.ax.scatter(location[0], location[1], color='b', marker='s')
-            self.ev_info[i]['passenger'] = -1
-            self.ev_info[i]['cs'] = -1
-            self.ev_info[i]['driving_to_pass'] = -1
-            self.ev_info[i]['driving_to_cs'] = -1
-            self.ev_info[i]['route'] = None
-            self.ev_info[i]['timer'] = 0
-            self.ev_info[i]['charging'] = False
-            self.ev_info[i]['serving'] = False
-            self.ev_info[i]['waiting'] = False
+            self.base_variables_ev(i)
         
         return canvas
 
@@ -444,9 +455,10 @@ class Env(tk.Tk):
             if len(final_route) * self.discharge_rate < self.ev_info[index]['SOC']:
                 self.user_info[picked_user]['status'] = 'served'
                 self.ev_info[index]['driving_to_pass'] = l_car_to_pass
-                self.info['driving_to_pass'].append(l_car_to_pass) 
+                self.info['driving_to_pass'].append(l_car_to_pass)
                 self.ev_info[index]['status'] = 'serving'
                 self.ev_info[index]['passenger'] = picked_user
+                self.ev_info[index]['where_at_user'].append(target)
                 self.pass_set.add(picked_user)
                 self.ev_info[index]['timer'] = self.graph.adj[int(target)][int(final_route[0])][0]['state']
                 self.ev_info[index]['route'] = iter(final_route)
@@ -548,7 +560,9 @@ class Env(tk.Tk):
                 self.info['cs'][self.ev_info[index]['cs']] += 1
                 self.charging_counter += 1
             if index not in self.info['active'].keys():
-                self.info['active'][index] = self.counter 
+                self.info['active'][index] = self.counter
+            # self.info['ev_total_trip'][index] = self.ev_info[index]['total_trip']
+            self.info['ev_where_at_user'][index] = self.ev_info[index]['where_at_user']
 
         ''' Check that no passenger has been waiting for more than beta.
         If this is the case, replace those passenger requests and give a negative reward to only 
@@ -598,6 +612,7 @@ class Env(tk.Tk):
         check = {}
         
         for k, v in self.ev_info.items():
+            # self.ev_info[k]['total_trip'].append(v['NODE_ID'])
             if v['status'] == 'idle':
                 check[k] = self.move(k, v, action)
             elif v['status'] == 'serving':
@@ -643,35 +658,14 @@ class Env(tk.Tk):
         self.traffic = self.speed[self.day].groupby('ts')
         self.traffic_time = iter(self.traffic.groups.keys())
 
-        self.counter = 0
-        self.traffic_counter = 0
-        self.user_counter = 0
-        self.no_pass_counter = 0
-        self.total_request_counter = 0
-        self.charging_counter = 0
-        self.user_dropped_counter = 0
         self.info.clear()
         self.pass_set.clear()
         self.taken_nodes.clear()
-        self.info['waiting_time'] = []
-        self.info['ev_wt'] = []
-        self.info['cs'] = {}
-        self.info['active'] = {}
-        self.info['ev_ct'] = []
-        self.info['driving_to_pass'] = []
-        self.info['driving_to_cs'] = []
+        
+        self.base_variables()
+        
         for k in self.ev_info.keys():
-            self.ev_info[k]['SOC'] = self.max_soc
-            self.ev_info[k]['timer'] = 0
-            self.ev_info[k]['passenger'] = -1
-            self.ev_info[k]['cs'] = -1
-            self.ev_info[k]['driving_to_pass'] = -1
-            self.ev_info[k]['driving_to_cs'] = -1
-            self.ev_info[k]['route'] = None
-            self.ev_info[k]['charging'] = False
-            self.ev_info[k]['serving'] = False
-            self.ev_info[k]['waiting'] = False
-            self.ev_info[k]['status'] = 'idle'
+            self.base_variables_ev(k)
             self.taken_nodes.add(self.ev_info[k]['NODE_ID'])
 
         for k in self.cs_info.keys():
