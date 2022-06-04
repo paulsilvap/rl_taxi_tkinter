@@ -523,7 +523,7 @@ class Env(tk.Tk):
         rewards = 0
 
         if self.ev_info[index]['NODE_ID'] == next_node and self.ev_info[index]['status'] == 'idle':
-            rewards -= 0.10
+            rewards -= 0.15
 
         if self.ev_info[index]['passenger'] != -1:
             picked_user = self.ev_info[index]['passenger']
@@ -567,10 +567,10 @@ class Env(tk.Tk):
 
             if (self.ev_info[index]['status'] == 'charging' and self.cs_info[picked_cs]['NODE_ID'] == next_node):
                 
-                if self.ev_info[index]['driving_to_cs'] != -1:
-                    driving_to_cs = self.ev_info[index]['driving_to_cs']
-                    rewards += self.alpha if driving_to_cs == 0 else (self.alpha / driving_to_cs)
-                    self.ev_info[index]['driving_to_cs'] = -1
+                # if self.ev_info[index]['driving_to_cs'] != -1:
+                #     driving_to_cs = self.ev_info[index]['driving_to_cs']
+                #     rewards += self.alpha if driving_to_cs == 0 else (self.alpha / driving_to_cs)
+                #     self.ev_info[index]['driving_to_cs'] = -1
 
                 if (not self.ev_info[index]['waiting'] and not self.ev_info[index]['charging']):
                     self.info['ev_wt'].append(self.cs_info[picked_cs]['waiting_time'])
@@ -610,8 +610,8 @@ class Env(tk.Tk):
 
         if all(v['status'] == 'standing' for v in self.user_info.values()):
             if all(v['waiting_time'] >= self.beta for v in self.user_info.values()):
-                # rewards -= self.beta*self.n_passenger
-                rewards -= self.beta
+                rewards -= self.beta*self.n_passenger
+                # rewards -= self.beta
                 for v in self.user_info.values():
                     self.info['waiting_time'].append(v['waiting_time'] * self.duration)
                 self.update_users()
