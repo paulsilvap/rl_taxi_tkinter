@@ -14,6 +14,7 @@ from gym import spaces
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 np.random.seed(100)
+random.seed(100)
 
 class Env(tk.Tk):
     # @profile
@@ -35,7 +36,8 @@ class Env(tk.Tk):
         alpha = 15,
         beta = 20,              # minutes that passenger will wait for e-taxi
         soc_threshold = 0.15,   # threshold for charge allocator
-        occurrence_rate = 0.5
+        occurrence_rate = 0.5,
+        max_number_of_requests = 100
         ):
         super().__init__()
 
@@ -56,6 +58,7 @@ class Env(tk.Tk):
         self.beta = beta
         self.soc_threshold = soc_threshold
         self.occurrence_rate = occurrence_rate
+        self.max_n_of_requests = max_number_of_requests
 
         self.graph = G
         self.intersections = gdf_nodes
@@ -63,6 +66,7 @@ class Env(tk.Tk):
         self.roads = gdf_edges
         self.aux_road_result = result.drop(columns=result.geometry.name)
         self.speed = s_df
+        self.pass_distribution = random.sample(range(int(self.max_steps)), self.max_n_of_requests)
 
         self.divide_map()
 
@@ -73,12 +77,25 @@ class Env(tk.Tk):
 
         ''' Define the action size and the observation space'''
         self.action_size = self.max_neighbours
-        self.observation_space_size = (self.n_roads + (self.n_ev * 2) + (self.n_passenger * 3) + self.n_cs)
+        self.observation_space_size = (self.n_roads + (self.n_ev * 3) + (self.n_passenger * 4) + self.n_cs)
         self.observation_space =  spaces.Box(
             low = np.array([-1.] * self.observation_space_size, dtype = np.float32),
             high = np.array([4000000000] * self.observation_space_size, dtype=np.float32),
             dtype = np.float32
         )
+
+        self.ev_status = {
+            'idle': 0,
+            'serving': 1,
+            'charging': 2,
+            'no_battery': 3, 
+        }
+
+        self.user_status = {
+            'standing': 0,
+            'served': 1,
+            'no_call': 2,
+        }
 
         self.cs_nodes = self.cs['NODE_ID'].values
         self.intersection_nodes = self.intersections.index.values
@@ -159,9 +176,11 @@ class Env(tk.Tk):
         self.info['ev_ct'] = []
         self.info['driving_to_cs'] = []
         self.info['driving_to_pass'] = []
+        self.info['real_driving_to_pass'] = []
+        # self.info['real_driving_to_cs'] = []
         self.info['cs'] = {}
         self.info['active'] = {}
-        self.info['ev_total_trip'] = {}
+        # self.info['ev_total_trip'] = {}
         self.info['ev_where_at_user'] = {}
 
     def base_variables_ev(self, i):
@@ -188,7 +207,7 @@ class Env(tk.Tk):
         self.roads = self.roads.drop(columns=self.roads.geometry.name)
         # self.ax.scatter(self.intersections['geometry'].x, self.intersections['geometry'].y, s = 2, zorder=-1, color='k')
         self.intersections = self.intersections.drop(columns=self.intersections.geometry.name)
-        self.ax.set(xlim = (self.city_boundaries[0], self.city_boundaries[2]), ylim = (self.city_boundaries[1], self.city_boundaries[3]))
+        # self.ax.set(xlim = (self.city_boundaries[0], self.city_boundaries[2]), ylim = (self.city_boundaries[1], self.city_boundaries[3]))
         self.fig.tight_layout()
         self.ax.scatter(self.cs['geometry'].x, self.cs['geometry'].y, color='xkcd:brown')
 
@@ -279,7 +298,8 @@ class Env(tk.Tk):
     # @profile
     def update_user_info(self, i):
         if i not in self.pass_set:
-            if np.random.random() < self.occurrence_rate:
+            if self.counter in self.pass_distribution and np.random.random() < self.occurrence_rate: 
+            # if self.counter in [self.min * 8, self.min * 16] and np.random.random() < self.occurrence_rate: 
                 self.taken_nodes.discard(self.user_info[i]['NODE_ID_source'])
                 self.taken_nodes.discard(self.user_info[i]['NODE_ID_destination'])
                 self.total_request_counter += 1
@@ -455,7 +475,7 @@ class Env(tk.Tk):
             if len(final_route) * self.discharge_rate < self.ev_info[index]['SOC']:
                 self.user_info[picked_user]['status'] = 'served'
                 self.ev_info[index]['driving_to_pass'] = l_car_to_pass
-                self.info['driving_to_pass'].append(l_car_to_pass)
+                # self.info['driving_to_pass'].append(l_car_to_pass)
                 self.ev_info[index]['status'] = 'serving'
                 self.ev_info[index]['passenger'] = picked_user
                 self.ev_info[index]['where_at_user'].append(target)
@@ -465,11 +485,19 @@ class Env(tk.Tk):
             
         return self.check_if_reward(index, target)
 
+    def status(self, obj, status):
+        if obj == 'ev':
+            _status = self.ev_status[status]
+        elif obj == 'user':
+            _status = self.user_status[status]
+        return _status 
+
     # @profile
     def get_state(self):
-        ev = [[v['SOC'],float(v['NODE_ID'])] for v in self.ev_info.values()]
+        ev = [[v['SOC'],float(v['NODE_ID']), self.status('ev',v['status'])] for v in self.ev_info.values()]
         ev = [d for data in ev for d in data]
-        user = [[float(v['NODE_ID_source']), float(v['NODE_ID_destination']), v['waiting_time']] for v in self.user_info.values()]
+        user = [[float(v['NODE_ID_source']), float(v['NODE_ID_destination']), 
+        v['waiting_time'], self.status('user',v['status'])] for v in self.user_info.values()]
         user = [d for data in user for d in data]
         cs = [v['waiting_time'] for v in self.cs_info.values()]
         if self.counter in self.daily_traffic_state[self.day].keys():
@@ -494,8 +522,23 @@ class Env(tk.Tk):
         check_list['if_done'] = False
         rewards = 0
 
+        if self.ev_info[index]['NODE_ID'] == next_node and self.ev_info[index]['status'] == 'idle':
+            rewards -= 0.10
+
         if self.ev_info[index]['passenger'] != -1:
             picked_user = self.ev_info[index]['passenger']
+
+            if (not self.user_info[picked_user]['picked_up'] and 
+                self.user_info[picked_user]['waiting_time'] >= self.beta):
+                self.info['waiting_time'].append(self.user_info[picked_user]['waiting_time'] * self.duration)
+                rewards -= self.user_info[picked_user]['waiting_time']
+                self.ev_info[index]['driving_to_pass'] = -1
+                self.ev_info[index]['serving'] = False
+                self.ev_info[index]['status'] = 'idle'
+                self.ev_info[index]['passenger'] = -1
+                self.pass_set.remove(picked_user)
+                self.user_dropped_counter += 1
+                self.update_user_info(picked_user)
 
             if (self.ev_info[index]['status'] == 'serving' and 
                 self.user_info[picked_user]['NODE_ID_source'] == next_node and
@@ -509,6 +552,8 @@ class Env(tk.Tk):
 
                 self.user_counter += 1
                 driving_to_pass = self.ev_info[index]['driving_to_pass']
+                self.info['driving_to_pass'].append(driving_to_pass)
+                self.info['real_driving_to_pass'].append(self.user_info[picked_user]['waiting_time']*self.duration)
                 rewards += self.alpha if driving_to_pass == 0 else (self.alpha / driving_to_pass)
                 self.ev_info[index]['driving_to_pass'] = -1
                 self.ev_info[index]['serving'] = False
@@ -517,7 +562,6 @@ class Env(tk.Tk):
                 self.pass_set.remove(picked_user)
                 self.update_user_info(picked_user)
                 
-
         if self.ev_info[index]['cs'] != -1:
             picked_cs = self.ev_info[index]['cs']
 
@@ -564,25 +608,21 @@ class Env(tk.Tk):
             # self.info['ev_total_trip'][index] = self.ev_info[index]['total_trip']
             self.info['ev_where_at_user'][index] = self.ev_info[index]['where_at_user']
 
-        ''' Check that no passenger has been waiting for more than beta.
-        If this is the case, replace those passenger requests and give a negative reward to only 
-        the ones that were assigned by the allocator to an E-Taxi '''
-        for k, v in self.user_info.items():    
-            if v['waiting_time'] >= self.beta:
-                self.info['waiting_time'].append(v['waiting_time'] * self.duration)
-                if k in self.pass_set:
-                    rewards -= v['waiting_time']
-                    self.ev_info[index]['driving_to_pass'] = -1
-                    self.ev_info[index]['serving'] = False
-                    self.ev_info[index]['status'] = 'idle'
-                    self.ev_info[index]['passenger'] = -1
-                    self.pass_set.remove(picked_user)
-                    self.user_dropped_counter += 1
-                self.update_user_info(k)
+        if all(v['status'] == 'standing' for v in self.user_info.values()):
+            if all(v['waiting_time'] >= self.beta for v in self.user_info.values()):
+                # rewards -= self.beta*self.n_passenger
+                rewards -= self.beta
+                for v in self.user_info.values():
+                    self.info['waiting_time'].append(v['waiting_time'] * self.duration)
+                self.update_users()
 
-        if (all(v['status'] == 'no_call' for v in self.user_info.values())):
-            self.no_pass_counter += 1
-            self.update_users()
+        ''' Check if any 'standing' passenger has been waiting for more than beta.
+        If this is the case, replace those passenger requests.'''
+        for k, v in self.user_info.items():
+            if k not in self.pass_set:
+                if v['waiting_time'] >= self.beta:
+                    self.info['waiting_time'].append(v['waiting_time'] * self.duration)
+                    self.update_user_info(k)
 
         check_list['rewards'] = rewards
 
@@ -604,41 +644,56 @@ class Env(tk.Tk):
         self.update_graph()
         if self.show:
             self.render()
+
+        if (all(v['status'] == 'no_call' for v in self.user_info.values())):
+            self.no_pass_counter += 1
+            self.update_users()
         
         for k, v in self.user_info.items():
             if not v['picked_up'] and v['status'] != 'no_call':
                 self.user_info[k]['waiting_time'] = self.counter if v['counter'] == 0 else self.counter - v['counter']
 
         check = {}
+
+        if self.n_ev == 1:
+            action = [action]
         
-        for k, v in self.ev_info.items():
-            # self.ev_info[k]['total_trip'].append(v['NODE_ID'])
-            if v['status'] == 'idle':
-                check[k] = self.move(k, v, action)
-            elif v['status'] == 'serving':
-                check[k] = self.serve(k, v)
-            elif v['status'] == 'charging':
-                check[k] = self.charge(k, v)
+        for i, action in enumerate(action):
+            if self.ev_info[i]['status'] == 'idle':
+                check[i] = self.move(i, self.ev_info[i], action)
+            elif self.ev_info[i]['status'] == 'serving':
+                check[i] = self.serve(i, self.ev_info[i])
+            elif self.ev_info[i]['status'] == 'charging':
+                check[i] = self.charge(i, self.ev_info[i])
             else:
-                check[k] = self.check_if_reward(k, v['NODE_ID'])
+                check[i] = self.check_if_reward(i, self.ev_info[i]['NODE_ID'])
 
         done = all(v['if_done'] for v in check.values())
 
         if done:
+            '''General Environment Information'''
+            self.info['no_pass'] = self.no_pass_counter/self.counter
+            self.info['count'] = self.counter
+
+            '''Results related to E-taxi'''
+            self.info['to_charge'] = self.charging_counter
+            self.info['avg_driving_to_pass'] = np.mean(self.info['driving_to_pass']) if len(self.info['driving_to_pass']) > 0 else np.nan
+            self.info['real_avg_driving_to_pass'] = np.mean(self.info['real_driving_to_pass']) if len(self.info['real_driving_to_pass']) > 0 else np.nan
+            self.info['avg_driving_to_cs'] = np.mean(self.info['driving_to_cs']) if self.charging_counter > 0 else np.nan
+            # self.info['real_avg_driving_to_cs'] = np.mean(self.info['real_driving_to_cs']) if len(self.info['real_driving_to_cs']) > 0 else np.nan
+            self.info['avg_ev_ct'] = np.mean(self.info['ev_ct']) if self.charging_counter > 0 else np.nan
+            self.info['avg_ev_wt'] = np.mean(self.info['ev_wt']) if self.charging_counter > 0 else np.nan
+            
+            '''Results related to passenger'''
             self.info['served_users'] = self.user_counter
             self.info['non_served_users'] = self.user_dropped_counter
-            self.info['count'] = self.counter
-            self.info['to_charge'] = self.charging_counter
-            self.info['rejection_rate'] = self.user_dropped_counter/self.total_request_counter
-            self.info['total_calls'] = len(self.info['waiting_time'])
-            self.info['avg_driving_to_pass'] = np.mean(self.info['driving_to_pass'])
-            self.info['avg_driving_to_cs'] = np.mean(self.info['driving_to_cs'])
-            self.info['avg_ev_ct'] = np.mean(self.info['ev_ct'])
-            self.info['avg_ev_wt'] = np.mean(self.info['ev_wt'])
             self.info['total_requests'] = self.total_request_counter
-            self.info['no_pass'] = self.no_pass_counter/self.counter
-            self.info['response_rate'] = self.user_counter/self.total_request_counter if self.total_request_counter > 0 else 0
-
+            self.info['total_calls'] = len(self.info['waiting_time'])
+            self.info['request_answered'] = self.user_dropped_counter + self.user_counter 
+            self.info['answered_rate'] = self.info['request_answered']/self.total_request_counter if self.total_request_counter > 0 else 0
+            self.info['successful_rate'] = self.user_counter / self.info['request_answered'] if self.total_request_counter > 0 else 0
+            self.info['unsuccessful_rate'] = self.user_dropped_counter / self.info['request_answered'] if self.total_request_counter > 0 else 0
+            # print(self.daily_passenger_calls)
         reward = sum([v['rewards'] for v in check.values()]) 
 
         s_ = self.get_state()
@@ -683,7 +738,7 @@ class Env(tk.Tk):
 
     def render(self):
         if self.normal_render:
-            time.sleep(0.1)
+            time.sleep(0.09)
         self.update()
         self.canvas.draw()
 
@@ -706,7 +761,8 @@ class GymEnv(gym.Env):
             alpha = 15,
             beta = 20,              
             soc_threshold = 0.15,
-            occurrence_rate = 0.5  
+            occurrence_rate = 0.5,
+            max_number_of_requests = 100
         ):
         super().__init__()
         self.game = Env(
@@ -726,18 +782,22 @@ class GymEnv(gym.Env):
             alpha = alpha,
             beta = beta,
             soc_threshold = soc_threshold,
-            occurrence_rate= occurrence_rate
+            occurrence_rate= occurrence_rate,
+            max_number_of_requests = max_number_of_requests
         )
         self.observation_space = self.game.observation_space
         self.action_space = spaces.Discrete(self.game.action_size)
+        self.total_reward = 0
 
     def step(self, action):
         obs, reward, done, info = self.game.step(action)
+        self.total_reward += reward
         return obs, reward, done, info
 
     def render(self):
         self.game.render()
 
     def reset(self):
+        self.total_reward = 0
         obs = self.game.reset()
         return obs
