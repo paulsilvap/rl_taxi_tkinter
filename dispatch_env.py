@@ -181,6 +181,7 @@ class Env(tk.Tk):
         self.info['ev_serving_time'] = 0
         self.info['ev_charging_time'] = 0
         self.info['ev_no_battery_time'] = 0
+        self.info['ev_total_distance'] = 0
         # self.info['real_driving_to_cs'] = []
         self.info['cs'] = {}
         self.info['active'] = {}
@@ -205,6 +206,7 @@ class Env(tk.Tk):
         self.ev_info[i]['waiting'] = False
         # self.ev_info[i]['total_trip'] = []
         self.ev_info[i]['where_at_user'] = []
+        self.ev_info[i]['distance'] = 0
 
     # @profile
     def create_plot(self):
@@ -391,8 +393,12 @@ class Env(tk.Tk):
             self.traffic_counter += 1
 
     # @profile
-    def discharge_ev(self, index):
-        self.ev_info[index]['SOC'] = (int(self.ev_info[index]['SOC']*10) - int((self.discharge_rate)*10))/10
+    def discharge_ev(self, index, current_node, next_node):
+        length = self.graph.adj[current_node][next_node][0]['LENGTH']
+        km = length / 450
+        self.ev_info[index]['distance'] = self.ev_info[index]['distance'] + km
+        consumption = km * self.discharge_rate
+        self.ev_info[index]['SOC'] = self.ev_info[index]['SOC'] - round(consumption, 2)
 
     # @profile
     def move(self, index, target, action):
@@ -404,7 +410,7 @@ class Env(tk.Tk):
             if self.show:
                 loc = [self.intersections.at[s_, 'x'], self.intersections.at[s_, 'y']]
                 self.ev_info[index]['scatter'].set_offsets(np.c_[loc[0], loc[1]])
-            self.discharge_ev(index)
+            self.discharge_ev(index, s, s_)
         else:
             s_ = s
 
@@ -587,7 +593,7 @@ class Env(tk.Tk):
                 if self.cs_info[picked_cs]['waiting_time'] == 0:
                     self.ev_info[index]['charging'] = True
                     self.ev_info[index]['waiting'] = False
-                    charging_time = int(np.ceil((self.max_soc - self.ev_info[index]['SOC'])/self.charge_rate))
+                    charging_time = int(np.ceil(((self.max_soc)- self.ev_info[index]['SOC'])/self.charge_rate))
                     self.info['ev_ct'].append(charging_time)
                     self.cs_info[picked_cs]['waiting_time'] = charging_time * self.duration
 
@@ -638,11 +644,12 @@ class Env(tk.Tk):
 
     # @profile
     def move_aux(self, index, next_node):
+        current_node = self.ev_info[index]['NODE_ID']
         self.ev_info[index]['NODE_ID'] = next_node
         if self.show:
             loc = [self.intersections.at[next_node, 'x'], self.intersections.at[next_node, 'y']]
             self.ev_info[index]['scatter'].set_offsets(np.c_[loc[0], loc[1]])
-        self.discharge_ev(index)
+        self.discharge_ev(index, current_node, next_node)
         return self.check_if_reward(index, next_node)
 
     # @profile
@@ -700,6 +707,7 @@ class Env(tk.Tk):
                 self.info['ev_serving_time'] += (v['serving_timer']/self.info['active'][k] if self.info['active'][k] > 0 else np.nan)
                 self.info['ev_charging_time'] += (v['charging_timer']/self.info['active'][k] if self.info['active'][k] > 0 else np.nan)
                 self.info['ev_no_battery_time'] += (v['no_battery_timer']/self.info['active'][k] if self.info['active'][k] > 0 else np.nan)
+                self.info['ev_total_distance'] += v['distance']
             self.info['avg_idle_time'] = (self.info['ev_idle_time']/self.n_ev)
             self.info['avg_serving_time'] = (self.info['ev_serving_time']/self.n_ev)
             self.info['avg_charging_time'] = (self.info['ev_charging_time']/self.n_ev)
@@ -714,7 +722,7 @@ class Env(tk.Tk):
             self.info['answered_rate'] = self.info['request_answered']/self.total_request_counter if self.total_request_counter > 0 else 0
             self.info['successful_rate'] = self.user_counter / self.info['request_answered'] if self.total_request_counter > 0 else 0
             self.info['unsuccessful_rate'] = self.user_dropped_counter / self.info['request_answered'] if self.total_request_counter > 0 else 0
-            # print(self.daily_passenger_calls)
+
         reward = sum([v['rewards'] for v in check.values()]) 
 
         s_ = self.get_state()
