@@ -22,6 +22,16 @@ pip install -r requirements.txt
     + Passengers = 5 
     + Charging Stations = 4
     + E-taxi: 1 
+- Graph Environments:
+  * dispatch_env:
+    * Variable Number of passengers
+    * Charging Stations = 2
+    * E-taxi: 1
+    * Better control over parameters of EV
+    * Real Network topology, traffic conditions and charging station locations
+
+## Example
+Run min_run.py to see a preview of the Graph Environment for a single episode. This script has most of the information necessary to run the environment.
 
 
 

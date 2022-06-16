@@ -5,6 +5,7 @@ import geopandas as gpd
 import pandas as pd
 from shapely.geometry import Point, box
 from shapely.ops import nearest_points
+from scipy.stats import truncnorm
 
 def create_graph(row, column, weight_limit=2):
 
@@ -47,7 +48,7 @@ def label_speed(gdf_edges, mask_101, mask_103, mask_107):
     gdf_edges.loc[red_mask, 'TC'] = 'red'
 
     aux_state = (length * 6) / (aux * 100)
-    gdf_edges['state'] = aux_state.round(0) + 1
+    gdf_edges['state'] = (aux_state.round(0) + 1)
 
     return gdf_edges.set_index(['F_NODE','T_NODE','LINK_ID'])
 
@@ -71,7 +72,11 @@ def create_map(days=1):
     bbox=(205000, 358000, 217500, 365500)
     # limits = [127.05693, 35.81962, 127.19335, 35.88782]
     # limits = [127.09, 35.83, 127.15, 35.86]
-    limits = [127.0923101112356, 35.83, 127.1210430644239, 35.84495946836995]
+    # limits = [127.0923101112356, 35.84495946836995, 127.1210430644239, 35.85991893673991]
+    # limits = [127.0923101112356, 35.83, 127.1210430644239, 35.84495946836995]
+    # limits = [127.10718162645955, 35.83, 127.12087654826718, 35.837461773474175] 
+    # limits = [127.10718162645955, 35.837461773474175, 127.12087654826718, 35.844923546948344]
+    limits = [127.105, 35.831, 127.126, 35.8421]
     new_bbox = box(limits[0], limits[1], limits[2], limits[3])
     # gdf_box = gpd.GeoDataFrame({'geometry': gpd.GeoSeries([new_bbox])}).set_crs('EPSG:4326')
 
@@ -168,3 +173,14 @@ def create_map(days=1):
     gdf_cs['position'] = gdf_cs.apply(lambda row: [row['geometry'].x,row['geometry'].y], axis=1)
 
     return gdf_edges, gdf_nodes, G, gdf_cs, daily_traffic, result
+
+def truncated_normal_distribution(bound_a, bound_b, mean, std, step, size):
+    a, b = (bound_a - mean) / std, (bound_b - mean) / std
+    x_range = np.linspace(bound_a, bound_b, int(((bound_b - bound_a)/step)+1))
+    
+    p = truncnorm.pdf(x_range, a, b, loc = mean, scale = std)
+    sum_p = sum(p)
+    p_norm = [i/sum_p for i in p]
+    
+    l = np.random.choice(x_range,size = size, p=p_norm, replace=False).astype(int)
+    return l

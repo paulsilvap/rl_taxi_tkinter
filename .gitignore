@@ -1,5 +1,5 @@
 __pycache__/
 chkpt/*
-traffic_data/*
+# traffic_data/*
 
 *.lprof

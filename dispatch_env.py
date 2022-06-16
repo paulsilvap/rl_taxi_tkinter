@@ -9,7 +9,7 @@ import tkinter as tk
 import geopandas as gpd
 
 from shapely.geometry import box
-from utils import create_map, label_speed, graph_from_gdfs
+from utils import create_map, label_speed, graph_from_gdfs, truncated_normal_distribution
 from gym import spaces
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
@@ -66,10 +66,14 @@ class Env(tk.Tk):
         self.roads = gdf_edges
         self.aux_road_result = result.drop(columns=result.geometry.name)
         self.speed = s_df
-        self.pass_distribution = random.sample(range(int(self.max_steps)), self.max_n_of_requests)
+        y1 = truncated_normal_distribution(0, 18*60, 9*60, 4*60, 1, int(self.max_n_of_requests/2))
+        y2 = truncated_normal_distribution(14*60, 24*60, 16*60, 5*60, 1, int(self.max_n_of_requests/2))
+        # self.pass_distribution = random.sample(range(int(self.max_steps)), self.max_n_of_requests)
+        self.pass_distribution = np.sort([*y1, *y2])
 
         self.divide_map()
 
+        self.node_neighbours = {n:int(d/2) for n, d in G.degree()}
         self.max_neighbours = int((max(sorted((d for _, d in G.degree()), reverse= True)))/2)
         self.n_cs = len(self.cs)
         self.n_roads = self.graph.number_of_edges()
@@ -196,6 +200,7 @@ class Env(tk.Tk):
         self.ev_info[i]['driving_to_pass'] = -1
         self.ev_info[i]['driving_to_cs'] = -1
         self.ev_info[i]['route'] = None
+        self.ev_info[i]['single_move'] = -1
         self.ev_info[i]['timer'] = 0
         self.ev_info[i]['idle_timer'] = 0
         self.ev_info[i]['serving_timer'] = 0
@@ -204,7 +209,6 @@ class Env(tk.Tk):
         self.ev_info[i]['charging'] = False
         self.ev_info[i]['serving'] = False
         self.ev_info[i]['waiting'] = False
-        # self.ev_info[i]['total_trip'] = []
         self.ev_info[i]['where_at_user'] = []
         self.ev_info[i]['distance'] = 0
 
@@ -309,7 +313,6 @@ class Env(tk.Tk):
     def update_user_info(self, i):
         if i not in self.pass_set:
             if self.counter in self.pass_distribution and np.random.random() < self.occurrence_rate: 
-            # if self.counter in [self.min * 8, self.min * 16] and np.random.random() < self.occurrence_rate: 
                 self.taken_nodes.discard(self.user_info[i]['NODE_ID_source'])
                 self.taken_nodes.discard(self.user_info[i]['NODE_ID_destination'])
                 self.total_request_counter += 1
@@ -395,7 +398,7 @@ class Env(tk.Tk):
     # @profile
     def discharge_ev(self, index, current_node, next_node):
         length = self.graph.adj[current_node][next_node][0]['LENGTH']
-        km = length / 450
+        km = length / 500
         self.ev_info[index]['distance'] = self.ev_info[index]['distance'] + km
         consumption = km * self.discharge_rate
         self.ev_info[index]['SOC'] = self.ev_info[index]['SOC'] - round(consumption, 2)
@@ -404,22 +407,29 @@ class Env(tk.Tk):
     def move(self, index, target, action):
         s = target['NODE_ID']
         sample = self.graph.neighbors(s)
-        s_ = next((x for i,x in enumerate(sample) if i==action), None)
-        if s_ is not None:
+        sample = list(sample)
+        if self.ev_info[index]['single_move'] == -1:
+            self.ev_info[index]['single_move'] = sample[action]
+            self.ev_info[index]['timer'] = self.graph.adj[int(s)][sample[action]][0]['state']
+
+        if self.ev_info[index]['timer'] > 1:
+            self.ev_info[index]['timer'] -= 1
+            check = self.check_if_reward(index, target['NODE_ID'])
+        elif self.ev_info[index]['timer'] == 1:
+            s_ = self.ev_info[index]['single_move']
+            self.ev_info[index]['single_move'] = -1
             self.ev_info[index]['NODE_ID'] = s_
             if self.show:
                 loc = [self.intersections.at[s_, 'x'], self.intersections.at[s_, 'y']]
                 self.ev_info[index]['scatter'].set_offsets(np.c_[loc[0], loc[1]])
-            self.discharge_ev(index, s, s_)
-        else:
-            s_ = s
+                self.discharge_ev(index, s, s_)
 
-        if (self.ev_info[index]['SOC'] < self.max_soc * self.soc_threshold) and (self.counter < self.max_steps):
-            check = self.charge_allocator(index, s_)
-        elif (self.counter < self.max_steps):
-            check = self.passenger_allocator(index, s_)
-        else:
-            check = self.check_if_reward(index, s_)
+            if (self.ev_info[index]['SOC'] < self.max_soc * self.soc_threshold) and (self.counter < self.max_steps):
+                check = self.charge_allocator(index, s_)
+            elif (self.counter < self.max_steps):
+                check = self.passenger_allocator(index, s_)
+            else:
+                check = self.check_if_reward(index, s_)
 
         return check
 
@@ -581,10 +591,10 @@ class Env(tk.Tk):
 
             if (self.ev_info[index]['status'] == 'charging' and self.cs_info[picked_cs]['NODE_ID'] == next_node):
                 
-                if self.ev_info[index]['driving_to_cs'] != -1:
-                    driving_to_cs = self.ev_info[index]['driving_to_cs']
-                    rewards += self.alpha if driving_to_cs == 0 else (self.alpha / driving_to_cs)
-                    self.ev_info[index]['driving_to_cs'] = -1
+                # if self.ev_info[index]['driving_to_cs'] != -1:
+                #     driving_to_cs = self.ev_info[index]['driving_to_cs']
+                #     rewards += self.alpha if driving_to_cs == 0 else (self.alpha / driving_to_cs)
+                #     self.ev_info[index]['driving_to_cs'] = -1
 
                 if (not self.ev_info[index]['waiting'] and not self.ev_info[index]['charging']):
                     self.info['ev_wt'].append(self.cs_info[picked_cs]['waiting_time'])
@@ -674,6 +684,8 @@ class Env(tk.Tk):
             action = [action]
         
         for i, action in enumerate(action):
+            '''Action masking to avoid invalid actions'''
+            action = action % (self.node_neighbours[self.ev_info[i]['NODE_ID']])
             if self.ev_info[i]['status'] == 'idle':
                 self.ev_info[i]['idle_timer'] += 1
                 check[i] = self.move(i, self.ev_info[i], action)
