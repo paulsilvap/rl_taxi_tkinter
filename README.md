@@ -1,4 +1,4 @@
-# Gridworld Environment for Electric Taxi
+# Simulation Environment for Electric Taxi Management
 This environment uses Tkinter to render the GUI and it is meant for testing different reinforcement learning algorithms.
 
 ## Installation
